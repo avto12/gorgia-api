@@ -396,30 +396,6 @@ if (!class_exists('sync_woo_json_importer')) {
             ];
         }
 
-        // Create secure directory with index files
-        private function create_secure_directory() {
-            $plugin_dir = plugin_dir_path(__FILE__);
-            $upload_dir = wp_upload_dir()['basedir'] . '/syncwoo-json/';
-
-            $directories = [$plugin_dir, $upload_dir];
-
-            foreach ($directories as $dir) {
-                if (!file_exists($dir)) {
-                    wp_mkdir_p($dir);
-                }
-
-                $index_file = $dir . 'index.php';
-                if (@file_put_contents($index_file, "<?php\n// Silence is golden\n") === false) {
-                    error_log('Failed to write index.php in ' . $dir);
-                }
-
-                $htaccess_file = $dir . '.htaccess';
-                if (!file_exists($htaccess_file)) {
-                    file_put_contents($htaccess_file, "Options -Indexes\nDeny from all");
-                }
-            }
-        }
-
         // Settings field renderers
         public function render_section_header() {
             echo '<p>' . esc_html__('Configure your JSON product feed synchronization settings below.', 'syncwoo') . '</p>';

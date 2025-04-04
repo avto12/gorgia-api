@@ -66,5 +66,13 @@ function clear_all_cron_jobs() {
 
 
 function sync_woo_deactivate() {
+
+    // Clear the specific scheduled cron job
     wp_clear_scheduled_hook('syncwoo_scheduled_sync');
+
+    // Optionally clear all cron jobs related to the plugin
+    clear_all_cron_jobs();
+
+    // Log the deactivation process
+    error_log('SyncWoo: Plugin deactivated and cron jobs cleared.');
 }

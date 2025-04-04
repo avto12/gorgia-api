@@ -1,3 +1,29 @@
+// countdown timer
+ 
+document.addEventListener('DOMContentLoaded', function () {
+    var countdownElement = document.getElementById('time-remaining');
+    var timeRemaining = parseInt(document.getElementById('countdown-timer').dataset.remaining, 10); // Get remaining time from data attribute
+
+    function updateCountdown() {
+        if (timeRemaining > 0) {
+            var days = Math.floor(timeRemaining / (24 * 60 * 60)); // Calculate days
+            var hours = Math.floor((timeRemaining % (24 * 60 * 60)) / (60 * 60)); // Calculate hours
+            var minutes = Math.floor((timeRemaining % (60 * 60)) / 60); // Calculate minutes
+            var seconds = timeRemaining % 60; // Calculate seconds
+
+            countdownElement.textContent = days + 'd ' + hours + 'h ' + minutes + 'm ' + seconds + 's';
+            timeRemaining--;
+
+            setTimeout(updateCountdown, 1000); // Update every second
+        } else {
+            countdownElement.textContent = 'Sync in progress...';
+        }
+    }
+
+    updateCountdown();
+});
+
+
 document.addEventListener('DOMContentLoaded', function() {
     const syncButton = document.getElementById('syncwoo-button');
     const cancelButton = document.getElementById('syncwoo-cancel');  // Add Cancel Button

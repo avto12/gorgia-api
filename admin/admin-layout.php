@@ -138,7 +138,7 @@ if (!class_exists('sync_woo_json_importer')) {
             }
 
              // Log the schedules for debugging
-             error_log('SyncWoo: Available cron schedules: ' . print_r($schedules, true));
+            //  error_log('SyncWoo: Available cron schedules: ' . print_r($schedules, true));
 
             
             return $schedules;
@@ -475,7 +475,40 @@ if (!class_exists('sync_woo_json_importer')) {
                     <span class="last-sync"><?php
                     echo get_option('syncwoo_last_sync') ? esc_html(get_option('syncwoo_last_sync')) : __('Never', 'syncwoo');  
                     ?></span>
-                    <br>
+                    <hr>
+                    <span class="sync-interval">
+                        <?php
+                            $frequency = get_option('syncwoo_sync_frequency', 'hourly'); // Get the selected frequency
+                            $schedules = wp_get_schedules(); // Get all available schedules
+
+                            if (isset($schedules[$frequency])) {
+                                $interval_in_seconds = $schedules[$frequency]['interval']; // Get interval in seconds
+
+                                // Get the next scheduled sync time
+                                $next_sync_timestamp = wp_next_scheduled('syncwoo_scheduled_sync');
+                                $current_time = time();
+
+                                if ($next_sync_timestamp) {
+                                    $time_remaining = $next_sync_timestamp - $current_time; // Calculate remaining time in seconds
+                                } else {
+                                    $time_remaining = 0; // No sync scheduled
+                                }
+                            } else {
+                                $time_remaining = 0; // Invalid frequency
+                            }
+                            ?>
+                            <div id="countdown-timer" data-remaining="<?php echo esc_attr($time_remaining); ?>">
+                                <span><?php esc_html_e('Time until next sync: ', 'syncwoo'); ?></span>
+                                <span id="time-remaining"></span>
+                            </div>
+                </span>
+                <hr>
+                    <span class="first-sync">
+                        <?php
+                        echo esc_html__('Note: When active plugin. First, click the "Run Sync Now" button below and then select the interval above.', 'syncwoo');
+                        ?>
+                    </span>
+                    <hr>
                     <?php
                     echo '<br>' . esc_html__('Note: The frequency of the sync may be affected by your server settings.', 'syncwoo');
                     echo '<br>' . esc_html__('For example, if your server has a limit of 1 request per minute, the sync will not run more frequently than that.', 'syncwoo');

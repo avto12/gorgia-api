@@ -18,7 +18,6 @@ register_activation_hook(__FILE__, 'sync_woo_activate');
 register_deactivation_hook(__FILE__, 'sync_woo_deactivate');
 
 function sync_woo_activate() {
-    // Create directory immediately on activation
     $upload_dir = wp_upload_dir();
     $local_dir = $upload_dir['basedir'] . '/syncwoo-json/';
     
@@ -41,9 +40,30 @@ function sync_woo_activate() {
     // Schedule the initial sync
     if (class_exists('sync_woo_json_importer')) {
         $importer = new sync_woo_json_importer();
+        error_log('SyncWoo: Activating and scheduling cron job.');
         $importer->schedule_cron();
+    } else {
+        error_log('SyncWoo: sync_woo_json_importer class not found.');
+    }
+
+    // Clear all existing cron jobs
+    clear_all_cron_jobs();
+}
+
+
+// Function to clear all scheduled cron jobs
+function clear_all_cron_jobs() {
+    $crons = _get_cron_array();
+    if ($crons) {
+        foreach ($crons as $timestamp => $cron) {
+            foreach ($cron as $hook => $d) {
+                wp_clear_scheduled_hook($hook);
+                error_log('SyncWoo: Cleared cron hook: ' . $hook);
+            }
+        }
     }
 }
+
 
 function sync_woo_deactivate() {
     wp_clear_scheduled_hook('syncwoo_scheduled_sync');

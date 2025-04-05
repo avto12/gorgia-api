@@ -1,11 +1,13 @@
 <?php
 /*
- * Plugin Name: SyncWoo
- * Description: A starter plugin for WordPress.
+ * Plugin Name: Gorgia SyncWoo
+ * Description: WooCommerce JSON product synchronization plugin.
  * Version: 1.0
  * Author: Avtandil Kakachishvili
  * Author URI: https://kakachishvili.com/
  * Text Domain: syncwoo
+ * Requires at least: 5.6
+ * Requires PHP: 7.4
  */
 
 defined('ABSPATH') || exit;

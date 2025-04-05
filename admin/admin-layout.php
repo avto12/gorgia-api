@@ -138,7 +138,7 @@ if (!class_exists('sync_woo_json_importer')) {
             }
 
              // Log the schedules for debugging
-             error_log('SyncWoo: Available cron schedules: ' . print_r($schedules, true));
+            //  error_log('SyncWoo: Available cron schedules: ' . print_r($schedules, true));
 
             
             return $schedules;
@@ -209,7 +209,7 @@ if (!class_exists('sync_woo_json_importer')) {
             add_settings_field(
                 'syncwoo_json_url_0',
                 __('JSON Feed URL 0', 'syncwoo'),
-                [$this, 'render_json_url_field'],
+                [$this, 'render_json_url_field_0'],
                 'syncwoo',
                 'syncwoo_main_section'
             );
@@ -321,7 +321,9 @@ if (!class_exists('sync_woo_json_importer')) {
                 'product_1' => get_option('syncwoo_json_url_1')
             ];
 
-            error_log('SyncWoo: Starting sync process for URL: ' . $json_urls);
+
+            // error_log('SyncWoo: Starting sync process for URL: ' . $json_urls);
+            error_log('SyncWoo: Starting sync process for URLs: ' . print_r($json_urls, true));
 
             if (empty($json_urls['product_0']) && empty($json_urls['product_1'])) {
                 error_log('SyncWoo: No JSON URL configured');
@@ -348,11 +350,24 @@ if (!class_exists('sync_woo_json_importer')) {
                         continue;
                     }
         
+                    // Validate the URL
+                    if (!filter_var($json_url, FILTER_VALIDATE_URL)) {
+                        error_log('SyncWoo: Invalid URL provided for ' . $key);
+                        continue;
+                    }
+                    
                     // Get JSON data
                     $response = wp_remote_get($json_url, [
                         'timeout' => 30,
                         'sslverify' => false,
                     ]);
+
+                    if (is_wp_error($response)) {
+                        // Add user-facing error message
+                        $errors[] = sprintf(__('Failed to fetch data from %s: %s', 'syncwoo'), $json_url, $response->get_error_message());
+                        error_log('SyncWoo Error: Failed to fetch data from ' . $json_url . '. Error: ' . $response->get_error_message());
+                        continue; // Skip to the next URL
+                    }
         
                     if (is_wp_error($response)) {
                         throw new Exception($response->get_error_message());
@@ -380,38 +395,6 @@ if (!class_exists('sync_woo_json_importer')) {
         
                     error_log('SyncWoo: File saved successfully for URL ' . $json_url . '. Bytes written: ' . $result);
                 }
-
-                // // Get JSON data
-                // $response = wp_remote_get($json_url, [
-                //     'timeout' => 30,
-                //     'sslverify' => false,
-                // ]);
-
-                // if (is_wp_error($response)) {
-                //     throw new Exception($response->get_error_message());
-                // }
-
-                // $response_code = wp_remote_retrieve_response_code($response);
-                // if ($response_code !== 200) {
-                //     throw new Exception(sprintf(__('API returned HTTP status: %d', 'syncwoo'), $response_code));
-                // }
-
-                // $body = wp_remote_retrieve_body($response);
-                // $data = json_decode($body, true);
-
-                // if (json_last_error() !== JSON_ERROR_NONE) {
-                //     throw new Exception(__('Invalid JSON response', 'syncwoo'));
-                // }
-
-                // // Save the file
-                // $local_file = $local_dir . 'products.json';
-                // $result = file_put_contents($local_file, $body);
-
-                // if ($result === false) {
-                //     throw new Exception(__('Failed to save JSON file. Check permissions.', 'syncwoo'));
-                // }
-
-                // error_log('SyncWoo: File saved successfully. Bytes written: ' . $result);
 
                 // Process data
                 $processed = $this->process_json_data($data);
@@ -460,7 +443,7 @@ if (!class_exists('sync_woo_json_importer')) {
             echo '<p>' . esc_html__('Configure your JSON product feed synchronization settings below.', 'syncwoo') . '</p>';
         }
 
-        public function render_json_url_field() {
+        public function render_json_url_field_0() {
             $url = get_option('syncwoo_json_url_0');
             echo '<input type="url" name="syncwoo_json_url_0" value="' . esc_url($url) . '" class="regular-text" placeholder="https://example.com/products_0.json">';
             echo '<p class="description">' . esc_html__('Enter the full Gorgia.ge URL to your JSON product feed', 'syncwoo') . '</p>';

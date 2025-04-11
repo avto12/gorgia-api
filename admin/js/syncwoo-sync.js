@@ -1,20 +1,30 @@
 // countdown timer
  
 document.addEventListener('DOMContentLoaded', function () {
+    var countdownContainer = document.getElementById('countdown-timer');
+    if (!countdownContainer) return;
+
     var countdownElement = document.getElementById('time-remaining');
-    var timeRemaining = parseInt(document.getElementById('countdown-timer').dataset.remaining, 10); // Get remaining time from data attribute
+    var timeRemaining = parseInt(countdownContainer.dataset.remaining, 10);
+
+    if (isNaN(timeRemaining)) return;
+
+    function pad(num) {
+        return num.toString().padStart(1, '0');
+    }
 
     function updateCountdown() {
         if (timeRemaining > 0) {
-            var days = Math.floor(timeRemaining / (24 * 60 * 60)); // Calculate days
-            var hours = Math.floor((timeRemaining % (24 * 60 * 60)) / (60 * 60)); // Calculate hours
-            var minutes = Math.floor((timeRemaining % (60 * 60)) / 60); // Calculate minutes
-            var seconds = timeRemaining % 60; // Calculate seconds
+            var days = Math.floor(timeRemaining / (24 * 60 * 60));
+            var hours = Math.floor((timeRemaining % (24 * 60 * 60)) / (60 * 60));
+            var minutes = Math.floor((timeRemaining % (60 * 60)) / 60);
+            var seconds = timeRemaining % 60;
 
-            countdownElement.textContent = days + 'd ' + hours + 'h ' + minutes + 'm ' + seconds + 's';
+            countdownElement.textContent =
+            days + 'd ' + pad(hours) + 'h ' + pad(minutes) + 'm ' + pad(seconds) + 's';
+
             timeRemaining--;
-
-            setTimeout(updateCountdown, 1000); // Update every second
+            setTimeout(updateCountdown, 1000);
         } else {
             countdownElement.textContent = 'Sync in progress...';
         }
@@ -23,7 +33,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateCountdown();
 });
 
-
+// add products to sync
 document.addEventListener('DOMContentLoaded', function() {
     const syncButton = document.getElementById('syncwoo-button');
     const cancelButton = document.getElementById('syncwoo-cancel');  // Add Cancel Button
@@ -94,7 +104,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (error.name === 'AbortError') {
                     resultDiv.innerHTML = `
                         <div class="notice notice-warning">
-                            <p>Sync was cancelled by the user.</p>
+                            <p>Sync was cancelled.</p>
                         </div>
                     `;
                 } else {

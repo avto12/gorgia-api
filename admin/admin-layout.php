@@ -3,13 +3,14 @@ defined('ABSPATH') || exit;
 
 function syncwoo_enqueue_style() {
    // Enqueue your css file
-   wp_enqueue_style('layout-css', plugin_dir_url(__FILE__) . './css/layout.css', array(), time(), 'all');
+   wp_enqueue_style('layout-css', plugin_dir_url(__FILE__) . 'css/layout.css', array(), time(), 'all');
 }
 add_action('admin_enqueue_scripts', 'syncwoo_enqueue_style');
 
 if (!class_exists('sync_woo_json_importer')) {
     class sync_woo_json_importer {
         public function __construct() {
+            
             add_action('admin_menu', [$this, 'add_admin_menu']);
             add_action('admin_init', [$this, 'register_settings']);
             add_action('admin_post_syncwoo_manual_sync', [$this, 'handle_manual_sync']);
@@ -554,7 +555,7 @@ if (!class_exists('sync_woo_json_importer')) {
         if (!file_exists($local_dir)) {
             wp_mkdir_p($local_dir);
             file_put_contents($local_dir . 'index.php', "<?php\n// Silence is golden");
-            file_put_contents($local_dir . '.htaccess', "Options -Indexes\nDeny from all");
+            file_put_contents($local_dir . '.htaccess', "Options -Indexes\n<FilesMatch \"\\.(php)$\">\n    Deny from all\n</FilesMatch>\n<FilesMatch \"\\.(css|js)$\">\n    Allow from all\n</FilesMatch>");
         }
         
         // Force immediate cron schedule setup
@@ -576,5 +577,12 @@ if (!class_exists('sync_woo_json_importer')) {
             $importer->schedule_cron();
         }
     }, 10, 2);
+
+    // Add admin notice for successful sync
+    add_action('admin_notices', function () {
+        if (isset($_GET['sync']) && $_GET['sync'] === 'success') {
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Sync completed successfully!', 'syncwoo') . '</p></div>';
+        }
+    });
 }
 ?>

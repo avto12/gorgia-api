@@ -18,3 +18,9 @@
   font-weight: 600;
   font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
 }
+
+.sync-interval{
+  font-weight: 600;
+  color: #0073aa;
+  font-size: 15px;
+}

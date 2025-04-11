@@ -36,7 +36,7 @@ function sync_woo_activate() {
     }
     
     if (!file_exists($htaccess_file)) {
-        file_put_contents($htaccess_file, "Options -Indexes\nDeny from all");
+        file_put_contents($local_dir . '.htaccess', "Options -Indexes\n<FilesMatch \"\\.(php)$\">\n    Deny from all\n</FilesMatch>\n<FilesMatch \"\\.(css|js)$\">\n    Allow from all\n</FilesMatch>");
     }
     
     // Schedule the initial sync

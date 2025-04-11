@@ -33,101 +33,124 @@ document.addEventListener('DOMContentLoaded', function () {
     updateCountdown();
 });
 
-// add products to sync
-document.addEventListener('DOMContentLoaded', function() {
+
+document.addEventListener('DOMContentLoaded', function () {
     const syncButton = document.getElementById('syncwoo-button');
-    const cancelButton = document.getElementById('syncwoo-cancel');  // Add Cancel Button
+    const cancelButton = document.getElementById('syncwoo-cancel');
     const resultDiv = document.getElementById('syncwoo-result');
+    const progressBar = document.querySelector('.progress-bar');
     let syncInProgress = false;
     let controller = null;
+    let processedCount = 0;
+    const batchSize = 10;
+    const delayBetweenBatches = 60 * 1000;
 
-    if (syncButton && resultDiv) {
-        syncButton.addEventListener('click', async function() {
-            // Check if sync is already in progress
-            if (syncInProgress) {
-                alert("Sync is already in progress. Please wait.");
-                return;
-            }
+    if (!syncButton || !cancelButton || !resultDiv || !progressBar) {
+        console.error('One or more required elements are missing');
+        return;
+    }
 
-            syncInProgress = true;
-            controller = new AbortController();  // Create a new AbortController for each sync
-            const button = this;
-            button.disabled = true;
-            button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
+    syncButton.addEventListener('click', async function () {
+        if (syncInProgress) {
+            alert("Sync is already in progress. Please wait.");
+            return;
+        }
 
-            resultDiv.innerHTML = '<div class="notice notice-info"><p>Processing request...</p></div>';
+        syncInProgress = true;
+        controller = new AbortController();
+        const button = this;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
 
-            try {
+        resultDiv.innerHTML = '<div class="notice notice-info"><p>Starting sync...</p></div>';
+        progressBar.style.width = '0%';
+        processedCount = 0;
+
+        try {
+            let totalProducts = null;
+
+            while (true) {
                 const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                    method: "POST",
+                    method: 'POST',
                     headers: {
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        "Accept": "application/json"
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'application/json'
                     },
-                    signal: controller.signal,  // Attach the controller signal to the fetch request
+                    signal: controller.signal,
                     body: new URLSearchParams({
                         action: 'syncwoo_perform_sync',
-                        nonce: syncwoo_vars.syncwoo_nonce
+                        nonce: syncwoo_vars.syncwoo_nonce,
+                        processed_count: processedCount,
+                        batch_size: batchSize
                     })
                 });
 
-                // Ensure the response is valid JSON
-                const contentType = response.headers.get('content-type');
-                if (!contentType || !contentType.includes('application/json')) {
+                if (!response.ok) {
                     const text = await response.text();
-                    console.error('Non-JSON response:', text.substring(0, 300));
-                    throw new Error('Server returned invalid response');
+                    throw new Error(`Server error (${response.status}): ${text}`);
                 }
 
                 const data = await response.json();
-
-                if (!response.ok || !data.success) {
-                    throw new Error(data.data?.message || 'Sync failed');
+                if (!data.success) {
+                    throw new Error(data.data?.message || 'Unknown error');
                 }
 
-                // Success case
+                processedCount = data.data.processed_count;
+                if (totalProducts === null && data.data.remaining !== undefined) {
+                    totalProducts = processedCount + data.data.remaining;
+                }
+
+                const progressPercentage = totalProducts ? Math.min((processedCount / totalProducts) * 100, 100) : 0;
+                progressBar.style.width = `${progressPercentage}%`;
+
                 resultDiv.innerHTML = `
                     <div class="notice notice-success">
                         <p>${data.data.message}</p>
-                        <p>Processed ${data.data.results?.processed ?? 0} products</p>
-                        ${data.data.results?.errors?.length ? `
-                            <div class="error-list">
-                                <h4>Errors:</h4>
-                                <ul>
-                                    ${data.data.results.errors.map(err => `<li>${err}</li>`).join('')}
-                                </ul>
-                            </div>
-                        ` : ''}
+                        <p>Processed: ${processedCount}</p>
+                        <p>Remaining: ${data.data.remaining}</p>
                     </div>
                 `;
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    resultDiv.innerHTML = `
-                        <div class="notice notice-warning">
-                            <p>Sync was cancelled.</p>
-                        </div>
-                    `;
-                } else {
-                    console.error('Sync error:', error);
-                    resultDiv.innerHTML = `
-                        <div class="notice notice-error">
-                            <p>${error.message}</p>
-                            <p>Please check the console for details.</p>
-                        </div>
-                    `;
-                }
-            } finally {
-                syncInProgress = false;
-                button.disabled = false;
-                button.textContent = "Sync Now";
-            }
-        });
 
-        // Cancel Sync
-        cancelButton.addEventListener('click', function() {
-            if (controller) {
-                controller.abort();  // Abort the fetch request, effectively stopping the sync
+                if (data.data.remaining === 0) {
+                    progressBar.style.width = '100%';
+                    break;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
             }
-        });
-    }
+
+            resultDiv.innerHTML = `
+                <div class="notice notice-success">
+                    <p>Sync completed!</p>
+                    <p>Total processed: ${processedCount}</p>
+                </div>
+            `;
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                resultDiv.innerHTML = '<div class="notice notice-warning"><p>Sync cancelled</p></div>';
+            } else {
+                console.error('Sync error:', error);
+                resultDiv.innerHTML = `
+                    <div class="notice notice-error">
+                        <p>Error: ${error.message}</p>
+                        <p>Check console or server logs</p>
+                    </div>
+                `;
+            }
+        } finally {
+            syncInProgress = false;
+            button.disabled = false;
+            button.textContent = 'Sync Now';
+            if (controller && controller.signal.aborted) {
+                progressBar.style.width = '0%';
+            }
+        }
+    });
+
+    cancelButton.addEventListener('click', function () {
+        if (controller) {
+            controller.abort();
+        }
+    });
 });

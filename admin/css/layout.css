@@ -24,3 +24,8 @@
   color: #0073aa;
   font-size: 15px;
 }
+
+ #syncwoo-progress{
+  border-radius: 8px;
+  margin: 10px 0;
+ }

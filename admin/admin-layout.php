@@ -273,18 +273,47 @@ if (!class_exists('sync_woo_json_importer')) {
             </div>
 
             <div class="wrap">
+            <?php
+                // Define the JSON files
+                $json_files = [
+                    'product_0' => WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json',
+                    'product_1' => WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json',
+                ];
+
+                // Loop through each JSON file
+                foreach ($json_files as $key => $json_file) {
+                    if (file_exists($json_file)) {
+                        $json_data = file_get_contents($json_file);
+                        $data = json_decode($json_data, true);
+
+                        if (json_last_error() !== JSON_ERROR_NONE) {
+                            echo '<p>' . esc_html__('Invalid JSON file: ', 'syncwoo') . $key . ' - ' . json_last_error_msg() . '</p>';
+                        } else {
+                            $product_count = is_array($data) ? count($data) : 0;
+
+                            echo '<p>' . esc_html__('Total Products in JSON file ', 'syncwoo') . esc_html($key) . ': <strong>' . esc_html($product_count) . '</strong></p>';
+                        }
+                    } else {
+                        echo '<p>' . esc_html__('JSON file not found: ', 'syncwoo') . esc_html($key) . '</p>';
+                    }
+                }
+                ?>
+
                 <h1><?php _e('SyncWoo - Product Sync', 'syncwoo'); ?></h1>
                 <p><?php _e('Click "Sync Now" to start syncing products from the JSON file.', 'syncwoo'); ?></p>
 
-                <button id="syncwoo-button" class="button button-primary">
-                   <?php _e('Sync Now', 'syncwoo'); ?>
-                </button>
-
-                <button id="syncwoo-cancel" class="button button-secondary">
-                   <?php _e('Stop Sync', 'syncwoo'); ?>
-                </button>
-
+                <button id="syncwoo-button" class="button button-primary">Start Sync</button>
+                <button id="syncwoo-cancel" class="button">Cancel</button>
                 <div id="syncwoo-result"></div>
+                <div style="width: 100%; background: #e1e1e1; height: 20px; margin-top: 10px;">
+                <div class="progress-bar" style="width: 0%; height: 100%; background: #7008e7;"></div>
+                </div>
+                <div id="syncwoo-result"></div>
+ 
+ 
+
+
+
             </div>
 
             <?php
@@ -585,4 +614,6 @@ if (!class_exists('sync_woo_json_importer')) {
         }
     });
 }
+
+
 ?>

@@ -42,7 +42,10 @@ document.addEventListener('DOMContentLoaded', function () {
     let syncInProgress = false;
     let controller = null;
     let processedCount = 0;
-    const batchSize = 10;
+    let newCount = 0;
+    let updatedCount = 0;
+    let deletedCount = 0;
+    const batchSize = 20;
     const delayBetweenBatches = 60 * 1000;
 
     if (!syncButton || !cancelButton || !resultDiv || !progressBar) {
@@ -60,16 +63,20 @@ document.addEventListener('DOMContentLoaded', function () {
         controller = new AbortController();
         const button = this;
         button.disabled = true;
+        cancelButton.disabled = false;
         button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
 
         resultDiv.innerHTML = '<div class="notice notice-info"><p>Starting sync...</p></div>';
         progressBar.style.width = '0%';
         processedCount = 0;
+        newCount = 0;
+        updatedCount = 0;
+        deletedCount = 0;
 
         try {
             let totalProducts = null;
 
-            while (true) {
+            while (syncInProgress) {
                 const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
                     method: 'POST',
                     headers: {
@@ -96,9 +103,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
 
                 processedCount = data.data.processed_count;
-                if (totalProducts === null && data.data.remaining !== undefined) {
-                    totalProducts = processedCount + data.data.remaining;
-                }
+                newCount += data.data.results.new_products;
+                updatedCount += data.data.results.updated_products;
+                deletedCount += data.data.results.deleted_products || 0;
+                totalProducts = data.data.total_products; // Use total from server
 
                 const progressPercentage = totalProducts ? Math.min((processedCount / totalProducts) * 100, 100) : 0;
                 progressBar.style.width = `${progressPercentage}%`;
@@ -106,7 +114,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 resultDiv.innerHTML = `
                     <div class="notice notice-success">
                         <p>${data.data.message}</p>
-                        <p>Processed: ${processedCount}</p>
+                        <p>Total Products in JSON: ${totalProducts}</p>
+                        <p>New Products: ${newCount}</p>
+                        <p>Updated Products: ${updatedCount}</p>
+                        <p>Deleted Products: ${deletedCount}</p>
                         <p>Remaining: ${data.data.remaining}</p>
                     </div>
                 `;
@@ -116,19 +127,31 @@ document.addEventListener('DOMContentLoaded', function () {
                     break;
                 }
 
-                await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(resolve, delayBetweenBatches);
+                    cancelButton.addEventListener('click', () => {
+                        clearTimeout(timeout);
+                        controller.abort();
+                    }, { once: true });
+                });
             }
 
-            resultDiv.innerHTML = `
-                <div class="notice notice-success">
-                    <p>Sync completed!</p>
-                    <p>Total processed: ${processedCount}</p>
-                </div>
-            `;
+            if (syncInProgress) {
+                resultDiv.innerHTML = `
+                    <div class="notice notice-success">
+                        <p>Sync completed!</p>
+                        <p>Total Products in JSON: ${totalProducts}</p>
+                        <p>Total New Products: ${newCount}</p>
+                        <p>Total Updated Products: ${updatedCount}</p>
+                        <p>Total Deleted Products: ${deletedCount}</p>
+                    </div>
+                `;
+            }
 
         } catch (error) {
             if (error.name === 'AbortError') {
                 resultDiv.innerHTML = '<div class="notice notice-warning"><p>Sync cancelled</p></div>';
+                progressBar.style.width = '0%';
             } else {
                 console.error('Sync error:', error);
                 resultDiv.innerHTML = `
@@ -141,16 +164,21 @@ document.addEventListener('DOMContentLoaded', function () {
         } finally {
             syncInProgress = false;
             button.disabled = false;
+            cancelButton.disabled = true;
             button.textContent = 'Sync Now';
-            if (controller && controller.signal.aborted) {
-                progressBar.style.width = '0%';
-            }
+            controller = null;
         }
     });
 
     cancelButton.addEventListener('click', function () {
-        if (controller) {
+        if (controller && syncInProgress) {
             controller.abort();
+            syncInProgress = false;
+            resultDiv.innerHTML = '<div class="notice notice-warning"><p>Sync cancelled</p></div>';
+            progressBar.style.width = '0%';
+            syncButton.disabled = false;
+            syncButton.textContent = 'Sync Now';
+            this.disabled = true;
         }
     });
 });

@@ -99,53 +99,79 @@ function syncwoo_perform_sync() {
         $file_path_1 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_1.json';
 
         $data = [];
-        $results = ['processed' => 0, 'errors' => [], 'duplicates' => []];
+        $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => []];
 
+        // Clear transient to ensure fresh JSON data
         $cache_key = 'syncwoo_json_data';
-        $data = get_transient($cache_key);
-        if ($data === false) {
-            if (!file_exists($file_path_0) || !file_exists($file_path_1)) {
-                throw new Exception('One or both JSON files are missing');
-            }
+        delete_transient($cache_key);
 
-            $json_data_0 = file_get_contents($file_path_0);
-            if ($json_data_0 === false) {
-                throw new Exception('Failed to read product_0.json');
-            }
-            $decoded_data_0 = json_decode($json_data_0, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                error_log('JSON error in product_0.json: ' . json_last_error_msg());
-                throw new Exception('Invalid JSON in product_0.json');
-            }
-            $data = $decoded_data_0;
-            unset($json_data_0, $decoded_data_0);
-
-            $json_data_1 = file_get_contents($file_path_1);
-            if ($json_data_1 === false) {
-                throw new Exception('Failed to read product_1.json');
-            }
-            $decoded_data_1 = json_decode($json_data_1, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                error_log('JSON error in product_1.json: ' . json_last_error_msg());
-                throw new Exception('Invalid JSON in product_1.json');
-            }
-            $data = array_merge($data, $decoded_data_1);
-            unset($json_data_1, $decoded_data_1);
-
-            if (empty($data)) {
-                throw new Exception('No valid data in JSON files');
-            }
-
-            set_transient($cache_key, $data, DAY_IN_SECONDS);
+        if (!file_exists($file_path_0) || !file_exists($file_path_1)) {
+            throw new Exception('One or both JSON files are missing');
         }
 
+        $json_data_0 = file_get_contents($file_path_0);
+        if ($json_data_0 === false) {
+            throw new Exception('Failed to read product_0.json');
+        }
+        $decoded_data_0 = json_decode($json_data_0, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('JSON error in product_0.json: ' . json_last_error_msg());
+            throw new Exception('Invalid JSON in product_0.json');
+        }
+        $data = $decoded_data_0;
+        unset($json_data_0, $decoded_data_0);
+
+        $json_data_1 = file_get_contents($file_path_1);
+        if ($json_data_1 === false) {
+            throw new Exception('Failed to read product_1.json');
+        }
+        $decoded_data_1 = json_decode($json_data_1, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('JSON error in product_1.json: ' . json_last_error_msg());
+            throw new Exception('Invalid JSON in product_1.json');
+        }
+        $data = array_merge($data, $decoded_data_1);
+        unset($json_data_1, $decoded_data_1);
+
+        if (empty($data)) {
+            throw new Exception('No valid data in JSON files');
+        }
+
+        set_transient($cache_key, $data, DAY_IN_SECONDS);
+
+        $total_products = count($data);
         $products_to_process = array_slice($data, $processed_count, $batch_size);
+
+        // Get all SKUs from JSON
+        $json_skus = array_map(function ($product) {
+            return sanitize_text_field($product['barcode'] ?? '');
+        }, $data);
+
+        // Delete products not in JSON (only on first batch)
+        if ($processed_count === 0) {
+            $existing_products = wc_get_products([
+                'limit' => -1,
+                'status' => 'publish',
+                'return' => 'objects'
+            ]);
+
+            foreach ($existing_products as $existing_product) {
+                $sku = $existing_product->get_sku();
+                if (!in_array($sku, $json_skus)) {
+                    $existing_product->delete(true); // Permanent delete
+                    $results['deleted_products']++;
+                    error_log("Deleted product with SKU: $sku (not in JSON)");
+                }
+            }
+        }
+
         if (empty($products_to_process)) {
             wp_send_json_success([
                 'message' => 'No more products to process',
                 'results' => $results,
                 'remaining' => 0,
-                'processed_count' => $processed_count
+                'processed_count' => $processed_count,
+                'total_products' => $total_products
             ]);
             exit;
         }
@@ -202,9 +228,9 @@ function syncwoo_perform_sync() {
         $brands = [];
         foreach ($products_to_process as $product_data) {
             if (!empty($product_data['features'])) {
-                foreach ($product_data['features'] as $feature) {
-                    if (isset($feature['feature_id']) && $feature['feature_id'] == 5485) {
-                        $brands[trim($feature['variant'])] = true;
+                foreach ($product_data['features'] as $f) {
+                    if (isset($f['feature_id']) && $f['feature_id'] == 5485) {
+                        $brands[trim($f['variant'])] = true;
                     }
                 }
             }
@@ -233,6 +259,24 @@ function syncwoo_perform_sync() {
                 $product_id = wc_get_product_id_by_sku($sku);
                 $is_update = $product_id > 0;
                 $product = $is_update ? new WC_Product($product_id) : new WC_Product_Simple();
+
+                $needs_update = false;
+
+                // Check if product needs updating
+                if ($is_update) {
+                    $needs_update = (
+                        $product->get_name() !== sanitize_text_field($product_data['product']) ||
+                        $product->get_description() !== wp_kses_post($product_data['description']) ||
+                        $product->get_regular_price() != floatval($product_data['list_price']) ||
+                        $product->get_sale_price() != floatval($product_data['price']) ||
+                        $product->get_stock_quantity() != absint($product_data['amount'] ?? 0) ||
+                        $product->get_weight() != floatval($product_data['weight'] ?? 0)
+                    );
+                }
+
+                if ($is_update && !$needs_update) {
+                    continue; // Skip if no changes
+                }
 
                 $product->set_name(sanitize_text_field($product_data['product']));
                 $product->set_description(wp_kses_post($product_data['description']));
@@ -389,17 +433,19 @@ function syncwoo_perform_sync() {
                     }
                 }
 
-                // Save product and increment processed only on success
                 $new_product_id = $product->save();
                 if (!$new_product_id) {
                     throw new Exception('Failed to save product: ' . $product_data['product']);
                 }
 
-                if ($is_update) {
-                    $results['duplicates'][] = $sku;
-                    error_log("Duplicate SKU updated: $sku");
+                if ($is_update && $needs_update) {
+                    $results['updated_products']++;
+                    error_log("Updated product with SKU: $sku due to changes");
+                } elseif (!$is_update) {
+                    $results['new_products']++;
+                    error_log("Added new product with SKU: $sku");
                 } else {
-                    $results['processed']++;
+                    error_log("No changes detected for product with SKU: $sku");
                 }
 
                 unset($product_data, $product, $attributes);
@@ -410,14 +456,13 @@ function syncwoo_perform_sync() {
             }
         }
 
-        $remaining = max(0, count($data) - ($processed_count + $results['processed']));
+        $remaining = max(0, $total_products - ($processed_count + count($products_to_process)));
         wp_send_json_success([
             'message' => 'Batch processed successfully',
             'results' => $results,
             'remaining' => $remaining,
-            'processed_count' => $processed_count + $results['processed'],
-            'total_processed' => $results['processed'],
-            'duplicates' => count($results['duplicates'])
+            'processed_count' => $processed_count + count($products_to_process),
+            'total_products' => $total_products
         ]);
 
         unset($products_to_process, $data);

@@ -16,57 +16,7 @@ function syncwoo_enqueue_scripts() {
 add_action('admin_enqueue_scripts', 'syncwoo_enqueue_scripts');
 
 
-/**
- * Helper function to upload product image
- */
-function syncwoo_upload_product_image($image_url) {
-    if (empty($image_url)) {
-        return 0;
-    }
-
-    require_once(ABSPATH . 'wp-admin/includes/file.php');
-    require_once(ABSPATH . 'wp-admin/includes/media.php');
-    require_once(ABSPATH . 'wp-admin/includes/image.php');
-
-    $filename = basename($image_url);
-    $existing = new WP_Query([
-        'post_type' => 'attachment',
-        'meta_query' => [
-            ['key' => '_wp_attached_file', 'value' => $filename]
-        ]
-    ]);
-
-    if ($existing->have_posts()) {
-        return $existing->posts[0]->ID;
-    }
-
-    $tmp = download_url($image_url);
-    if (is_wp_error($tmp)) {
-        error_log("Image download failed: " . $tmp->get_error_message());
-        return 0;
-    }
-
-    $file_array = [
-        'name' => $filename,
-        'tmp_name' => $tmp
-    ];
-    $image_id = media_handle_sideload($file_array, 0);
-
-    if (is_wp_error($image_id)) {
-        @unlink($tmp);
-        error_log("Image upload failed: " . $image_id->get_error_message());
-        return 0;
-    }
-
-    @unlink($tmp);
-    return $image_id;
-}
-
-
-
-/**
- * Handle product synchronization via AJAX
- */
+// AJAX handler for synchronization
 add_action('wp_ajax_syncwoo_perform_sync', 'syncwoo_perform_sync');
 
 function syncwoo_perform_sync() {
@@ -84,7 +34,7 @@ function syncwoo_perform_sync() {
         exit;
     }
 
-    $local_dir = WP_CONTENT_DIR . '/Uploads/syncwoo-json/';
+    $local_dir = WP_CONTENT_DIR . '/uploads/syncwoo-json/';
     if (!file_exists($local_dir)) {
         wp_mkdir_p($local_dir);
     }
@@ -93,10 +43,10 @@ function syncwoo_perform_sync() {
 
     try {
         $processed_count = isset($_POST['processed_count']) ? intval($_POST['processed_count']) : 0;
-        $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 20;
+        $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 10;
 
-        $file_path_0 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_0.json';
-        $file_path_1 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_1.json';
+        $file_path_0 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json';
+        $file_path_1 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json';
 
         $data = [];
         $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => []];
@@ -274,10 +224,6 @@ function syncwoo_perform_sync() {
                     );
                 }
 
-                if ($is_update && !$needs_update) {
-                    continue; // Skip if no changes
-                }
-
                 $product->set_name(sanitize_text_field($product_data['product']));
                 $product->set_description(wp_kses_post($product_data['description']));
                 $product->set_regular_price(floatval($product_data['list_price']));
@@ -375,32 +321,59 @@ function syncwoo_perform_sync() {
                     }
                 }
 
+                // Handle "ერთეული" attribute
                 if (!empty($product_data['Unit'])) {
                     $unit_value = sanitize_text_field($product_data['Unit']);
-                    $taxonomy = 'unit';
+                    $taxonomy = 'unit'; // Slug remains "unit"
+
                     if (!taxonomy_exists($taxonomy)) {
-                        wc_create_attribute([
-                            'name' => 'Unit',
+                        $attribute = wc_create_attribute([
+                            'name' => 'ერთეული',
                             'slug' => $taxonomy,
                             'type' => 'select'
                         ]);
-                        register_taxonomy($taxonomy, 'product', [
-                            'labels' => ['name' => 'Unit'],
-                            'hierarchical' => true
-                        ]);
+                        if (is_wp_error($attribute)) {
+                            error_log("Failed to create attribute 'ერთეული': " . $attribute->get_error_message());
+                        } else {
+                            register_taxonomy($taxonomy, 'product', [
+                                'labels' => ['name' => 'ერთეული'],
+                                'hierarchical' => false,
+                                'public' => true
+                            ]);
+                        }
                     }
 
-                    $term = term_exists($unit_value, $taxonomy) ?: wp_insert_term($unit_value, $taxonomy);
-                    if (!is_wp_error($term)) {
-                        wp_set_object_terms($product->get_id(), (int)$term['term_id'], $taxonomy, true);
-                        if (!isset($attributes[$taxonomy])) {
-                            $attr = new WC_Product_Attribute();
-                            $attr->set_name('Unit');
-                            $attr->set_visible(true);
-                            $attr->set_variation(false);
-                            $attr->set_options([$unit_value]);
-                            $attributes[$taxonomy] = $attr;
+                    $term = term_exists($unit_value, $taxonomy);
+                    if (!$term) {
+                        $term_result = wp_insert_term($unit_value, $taxonomy);
+                        if (is_wp_error($term_result)) {
+                            error_log("Failed to insert term '$unit_value' for taxonomy '$taxonomy': " . $term_result->get_error_message());
+                        } else {
+                            $term_id = $term_result['term_id'];
+                            error_log("New term '$unit_value' created for taxonomy '$taxonomy', ID: $term_id");
                         }
+                    } else {
+                        $term_id = is_array($term) ? $term['term_id'] : $term;
+                        error_log("Term '$unit_value' already exists for taxonomy '$taxonomy', ID: $term_id");
+                    }
+
+                    if (isset($term_id) && $term_id) {
+                        $result = wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
+                        if (is_wp_error($result)) {
+                            error_log("Failed to set term '$unit_value' for product ID {$product->get_id()}: " . $result->get_error_message());
+                        } else {
+                            error_log("Term '$unit_value' assigned to product ID {$product->get_id()}");
+                        }
+                    }
+
+                    if (!isset($attributes[$taxonomy])) {
+                        $attr = new WC_Product_Attribute();
+                        $attr->set_name('ერთეული');
+                        $attr->set_options([$unit_value]);
+                        $attr->set_position(0);
+                        $attr->set_visible(true);
+                        $attr->set_variation(false);
+                        $attributes[$taxonomy] = $attr;
                     }
                 }
 
@@ -413,23 +386,56 @@ function syncwoo_perform_sync() {
                     }
                 }
 
+                // Handle main image
+                $current_image_id = $product->get_image_id();
                 if (!empty($product_data['images'][0])) {
-                    $image_id = syncwoo_upload_product_image($product_data['images'][0]);
-                    if ($image_id && !is_wp_error($image_id)) {
-                        $product->set_image_id($image_id);
+                    $new_image_url = rtrim($product_data['images'][0], '/');
+                    $new_image_id = syncwoo_upload_product_image($new_image_url);
+
+                    if ($new_image_id && !is_wp_error($new_image_id)) {
+                        $current_url_hash = $current_image_id ? get_post_meta($current_image_id, '_syncwoo_image_url_hash', true) : '';
+                        $new_url_hash = md5($new_image_url);
+
+                        if ($current_image_id && $current_url_hash === $new_url_hash) {
+                            error_log("Main image unchanged for SKU: $sku, URL: $new_image_url (hash: $new_url_hash)");
+                        } else {
+                            $product->set_image_id($new_image_id);
+                            $needs_update = true;
+                            error_log("Main image set/updated for SKU: $sku, URL: $new_image_url (hash: $new_url_hash)");
+                        }
                     }
                 }
 
+                // Handle gallery images with strict duplicate prevention
                 if (!empty($product_data['images']) && count($product_data['images']) > 1) {
-                    $gallery_ids = [];
+                    $current_gallery_ids = $product->get_gallery_image_ids();
+                    $current_gallery_hashes = array_map(function ($id) {
+                        return get_post_meta($id, '_syncwoo_image_url_hash', true);
+                    }, $current_gallery_ids);
+                    $new_gallery_ids = [];
+                    $new_gallery_hashes = [];
+
                     for ($i = 1; $i < count($product_data['images']); $i++) {
-                        $image_id = syncwoo_upload_product_image($product_data['images'][$i]);
-                        if ($image_id && !is_wp_error($image_id)) {
-                            $gallery_ids[] = $image_id;
+                        $gallery_image_url = rtrim($product_data['images'][$i], '/');
+                        $gallery_image_hash = md5($gallery_image_url);
+
+                        if (!in_array($gallery_image_hash, $current_gallery_hashes) && !in_array($gallery_image_hash, $new_gallery_hashes)) {
+                            $gallery_image_id = syncwoo_upload_product_image($gallery_image_url);
+                            if ($gallery_image_id && !is_wp_error($gallery_image_id)) {
+                                $new_gallery_ids[] = $gallery_image_id;
+                                $new_gallery_hashes[] = $gallery_image_hash;
+                                error_log("New gallery image added for SKU: $sku, URL: $gallery_image_url (hash: $gallery_image_hash)");
+                            }
+                        } else {
+                            error_log("Gallery image skipped (duplicate) for SKU: $sku, URL: $gallery_image_url (hash: $gallery_image_hash)");
                         }
                     }
-                    if (!empty($gallery_ids)) {
-                        $product->set_gallery_image_ids($gallery_ids);
+
+                    if (!empty($new_gallery_ids)) {
+                        $updated_gallery_ids = array_merge($current_gallery_ids, $new_gallery_ids);
+                        $product->set_gallery_image_ids($updated_gallery_ids);
+                        $needs_update = true;
+                        error_log("Gallery updated for SKU: $sku, new IDs: " . implode(', ', $new_gallery_ids));
                     }
                 }
 
@@ -458,7 +464,7 @@ function syncwoo_perform_sync() {
 
         $remaining = max(0, $total_products - ($processed_count + count($products_to_process)));
         wp_send_json_success([
-            'message' => 'Batch processed successfully',
+            'message' => 'Processed successfully',
             'results' => $results,
             'remaining' => $remaining,
             'processed_count' => $processed_count + count($products_to_process),
@@ -487,4 +493,70 @@ function transliterate_georgian_to_latin($text) {
     ];
 
     return str_replace($georgian, $latin, $text);
+}
+
+
+
+// Image upload function with improved duplicate check
+function syncwoo_upload_product_image($image_url) {
+    require_once(ABSPATH . 'wp-admin/includes/image.php');
+    require_once(ABSPATH . 'wp-admin/includes/file.php');
+    require_once(ABSPATH . 'wp-admin/includes/media.php');
+
+    // Check if image URL is empty
+    if (empty($image_url)) {
+        return new WP_Error('empty_image_url', __('Image URL is missing', 'syncwoo'));
+    }
+
+    // Check if image already exists in the media library
+    $existing_id = attachment_url_to_postid($image_url);
+    if ($existing_id) {
+        return $existing_id; // Return existing image ID
+    }
+
+    // Download new image
+    $tmp_file = download_url($image_url);
+    if (is_wp_error($tmp_file)) {
+        return new WP_Error('download_failed', __('Failed to download image', 'syncwoo'));
+    }
+
+    // Extract file name from URL
+    $image_name = basename(parse_url($image_url, PHP_URL_PATH));
+
+    // Ensure the file name is valid
+    if (empty($image_name)) {
+        @unlink($tmp_file); // Delete temporary file
+        return new WP_Error('invalid_image_name', __('Invalid image name', 'syncwoo'));
+    }
+
+    // Check if an image with the same name exists in media library
+    $existing_attachment = get_posts([
+        'post_type' => 'attachment',
+        'post_status' => 'inherit',
+        'meta_query' => [
+            [
+                'key' => '_wp_attached_file',
+                'value' => $image_name,
+                'compare' => 'LIKE',
+            ],
+        ],
+        'posts_per_page' => 1,
+    ]);
+
+    if (!empty($existing_attachment)) {
+        return $existing_attachment[0]->ID; // Return existing image ID
+    }
+
+    $file_array = [
+        'name' => $image_name,
+        'tmp_name' => $tmp_file
+    ];
+
+    // Upload the image to WordPress media library
+    $id = media_handle_sideload($file_array, 0);
+
+    // Clean up temp file
+    @unlink($tmp_file);
+
+    return is_wp_error($id) ? $id : $id;
 }

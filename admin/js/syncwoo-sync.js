@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let newCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
-    const batchSize = 20;
+    const batchSize = 10;
     const delayBetweenBatches = 60 * 1000;
 
     if (!syncButton || !cancelButton || !resultDiv || !progressBar) {

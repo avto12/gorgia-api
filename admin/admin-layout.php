@@ -546,7 +546,7 @@ if (!class_exists('sync_woo_json_importer')) {
 
     // Initialize the plugin
     new sync_woo_json_importer();
-
+ 
     // Improved activation hook
     register_activation_hook(__FILE__, function() {
         $upload_dir = wp_upload_dir();

@@ -34,7 +34,7 @@ function syncwoo_perform_sync() {
         exit;
     }
 
-    $local_dir = WP_CONTENT_DIR . '/uploads/syncwoo-json/';
+    $local_dir = WP_CONTENT_DIR . '/Uploads/syncwoo-json/';
     if (!file_exists($local_dir)) {
         wp_mkdir_p($local_dir);
     }
@@ -45,8 +45,8 @@ function syncwoo_perform_sync() {
         $processed_count = isset($_POST['processed_count']) ? intval($_POST['processed_count']) : 0;
         $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 10;
 
-        $file_path_0 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json';
-        $file_path_1 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json';
+        $file_path_0 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_0.json';
+        $file_path_1 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_1.json';
 
         $data = [];
         $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => []];
@@ -179,23 +179,34 @@ function syncwoo_perform_sync() {
         foreach ($products_to_process as $product_data) {
             if (!empty($product_data['features'])) {
                 foreach ($product_data['features'] as $f) {
-                    if (isset($f['feature_id']) && $f['feature_id'] == 5485) {
+                    if (isset($f['feature_id']) && $f['feature_id'] == 5485 && !empty(trim($f['variant']))) {
                         $brands[trim($f['variant'])] = true;
                     }
                 }
             }
         }
 
-        $brand_taxonomy = 'product_brand';
+        $brand_taxonomy = 'product_brand'; // Use plain taxonomy as requested
         if (!taxonomy_exists($brand_taxonomy)) {
             register_taxonomy($brand_taxonomy, 'product', [
                 'labels' => ['name' => 'Brands'],
-                'hierarchical' => true
+                'hierarchical' => false,
+                'public' => true
             ]);
+            error_log("Created brand taxonomy '$brand_taxonomy'");
         }
+
         foreach (array_keys($brands) as $brand) {
-            if (!term_exists($brand, $brand_taxonomy)) {
-                wp_insert_term($brand, $brand_taxonomy);
+            $term = term_exists($brand, $brand_taxonomy);
+            if (!$term) {
+                $term_result = wp_insert_term($brand, $brand_taxonomy);
+                if (is_wp_error($term_result)) {
+                    error_log("Failed to create brand term '$brand': " . $term_result->get_error_message());
+                } else {
+                    error_log("Created brand term '$brand', ID: " . $term_result['term_id']);
+                }
+            } else {
+                error_log("Brand term '$brand' already exists");
             }
         }
 
@@ -253,9 +264,13 @@ function syncwoo_perform_sync() {
                     $product->set_category_ids($category_ids);
                 }
 
+                // Handle product attributes
                 $attributes = $product->get_attributes();
+
+                // Store brand value for assignment after save
                 $product_brand = null;
 
+                // Process features attributes
                 if (!empty($product_data['features'])) {
                     foreach ($product_data['features'] as $feature) {
                         $name = trim($feature['feature']);
@@ -267,56 +282,71 @@ function syncwoo_perform_sync() {
                         }
 
                         if ($feature_id == 5485) {
-                            $product_brand = $value;
+                            $product_brand = $value; // Store for later assignment
                             continue;
                         }
 
-                        $taxonomy_slug = 'go_' . $feature_id;
-                        $taxonomy = wc_attribute_taxonomy_name($taxonomy_slug);
+                        $taxonomy_slug = 'pa_go_' . $feature_id;
+                        $taxonomy = wc_attribute_taxonomy_name('go_' . $feature_id);
 
+                        // Create attribute if it doesn't exist
                         if (!taxonomy_exists($taxonomy)) {
                             $attribute_id = wc_create_attribute([
                                 'name' => $name,
-                                'slug' => $taxonomy_slug,
+                                'slug' => 'go_' . $feature_id,
                                 'type' => 'select'
                             ]);
 
                             if (is_wp_error($attribute_id)) {
-                                error_log("Failed to create attribute $name: " . $attribute_id->get_error_message());
+                                error_log("Failed to create attribute '$name': " . $attribute_id->get_error_message());
                                 continue;
                             }
 
                             register_taxonomy($taxonomy, 'product', [
                                 'labels' => ['name' => $name],
-                                'hierarchical' => true
+                                'hierarchical' => false,
+                                'public' => true
                             ]);
+                            error_log("Created taxonomy '$taxonomy' for attribute '$name'");
                         }
 
+                        // Ensure term exists or create it
                         $term = term_exists($value, $taxonomy);
                         if (!$term) {
-                            $term = wp_insert_term($value, $taxonomy);
-                            if (is_wp_error($term)) {
-                                error_log("Failed to create term $value for $taxonomy: " . $term->get_error_message());
+                            $term_result = wp_insert_term($value, $taxonomy);
+                            if (is_wp_error($term_result)) {
+                                error_log("Failed to insert term '$value' for taxonomy '$taxonomy': " . $term_result->get_error_message());
                                 continue;
+                            } else {
+                                $term_id = $term_result['term_id'];
+                                error_log("New term '$value' created for taxonomy '$taxonomy', ID: $term_id");
+                            }
+                        } else {
+                            $term_id = is_array($term) ? $term['term_id'] : $term;
+                            error_log("Term '$value' already exists for taxonomy '$taxonomy', ID: $term_id");
+                        }
+
+                        // Assign term to product
+                        if (isset($term_id) && $term_id) {
+                            $result = wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
+                            if (is_wp_error($result)) {
+                                error_log("Failed to set term '$value' for product ID {$product->get_id()}: " . $result->get_error_message());
+                            } else {
+                                error_log("Term '$value' assigned to product ID {$product->get_id()}");
                             }
                         }
-                        $term_id = is_array($term) ? $term['term_id'] : $term;
 
-                        wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, true);
-
+                        // Add to product attributes
                         if (!isset($attributes[$taxonomy])) {
                             $attr = new WC_Product_Attribute();
-                            $attr->set_name($name);
+                            $attr->set_id(wc_attribute_taxonomy_id_by_name('go_' . $feature_id));
+                            $attr->set_name($taxonomy);
+                            $attr->set_options([$value]);
+                            $attr->set_position(0);
                             $attr->set_visible(true);
                             $attr->set_variation(false);
-                            $attr->set_options([$value]);
                             $attributes[$taxonomy] = $attr;
-                        } else {
-                            $current_values = $attributes[$taxonomy]->get_options();
-                            if (!in_array($value, $current_values)) {
-                                $current_values[] = $value;
-                                $attributes[$taxonomy]->set_options($current_values);
-                            }
+                            error_log("Attribute '$name' set for product ID {$product->get_id()} with value '$value'");
                         }
                     }
                 }
@@ -324,12 +354,13 @@ function syncwoo_perform_sync() {
                 // Handle "ერთეული" attribute
                 if (!empty($product_data['Unit'])) {
                     $unit_value = sanitize_text_field($product_data['Unit']);
-                    $taxonomy = 'unit'; // Slug remains "unit"
+                    $taxonomy = 'pa_unit';
 
+                    // Create attribute if it doesn't exist
                     if (!taxonomy_exists($taxonomy)) {
                         $attribute = wc_create_attribute([
                             'name' => 'ერთეული',
-                            'slug' => $taxonomy,
+                            'slug' => 'unit',
                             'type' => 'select'
                         ]);
                         if (is_wp_error($attribute)) {
@@ -340,9 +371,11 @@ function syncwoo_perform_sync() {
                                 'hierarchical' => false,
                                 'public' => true
                             ]);
+                            error_log("Created taxonomy '$taxonomy' for 'ერთეული'");
                         }
                     }
 
+                    // Ensure term exists or create it
                     $term = term_exists($unit_value, $taxonomy);
                     if (!$term) {
                         $term_result = wp_insert_term($unit_value, $taxonomy);
@@ -357,6 +390,7 @@ function syncwoo_perform_sync() {
                         error_log("Term '$unit_value' already exists for taxonomy '$taxonomy', ID: $term_id");
                     }
 
+                    // Assign term to product
                     if (isset($term_id) && $term_id) {
                         $result = wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
                         if (is_wp_error($result)) {
@@ -366,25 +400,22 @@ function syncwoo_perform_sync() {
                         }
                     }
 
+                    // Add to product attributes
                     if (!isset($attributes[$taxonomy])) {
                         $attr = new WC_Product_Attribute();
-                        $attr->set_name('ერთეული');
+                        $attr->set_id(wc_attribute_taxonomy_id_by_name('unit'));
+                        $attr->set_name($taxonomy);
                         $attr->set_options([$unit_value]);
                         $attr->set_position(0);
                         $attr->set_visible(true);
                         $attr->set_variation(false);
                         $attributes[$taxonomy] = $attr;
+                        error_log("Attribute 'ერთეული' set for product ID {$product->get_id()} with value '$unit_value'");
                     }
                 }
 
+                // Save all attributes to product
                 $product->set_attributes($attributes);
-
-                if ($product_brand) {
-                    $brand_term = term_exists($product_brand, $brand_taxonomy);
-                    if ($brand_term) {
-                        wp_set_object_terms($product->get_id(), (int)$brand_term['term_id'], $brand_taxonomy, true);
-                    }
-                }
 
                 // Handle main image
                 $current_image_id = $product->get_image_id();
@@ -439,9 +470,38 @@ function syncwoo_perform_sync() {
                     }
                 }
 
+                // Save the product first to ensure it has a valid ID
                 $new_product_id = $product->save();
                 if (!$new_product_id) {
                     throw new Exception('Failed to save product: ' . $product_data['product']);
+                }
+
+                // Now assign the brand taxonomy after saving the product
+                if ($product_brand) {
+                    $term = term_exists($product_brand, $brand_taxonomy);
+                    $term_id = null;
+
+                    if (!$term) {
+                        $term_result = wp_insert_term($product_brand, $brand_taxonomy);
+                        if (is_wp_error($term_result)) {
+                            error_log("Failed to create brand term '$product_brand': " . $term_result->get_error_message());
+                        } else {
+                            $term_id = $term_result['term_id'];
+                            error_log("Created brand term '$product_brand', ID: $term_id");
+                        }
+                    } else {
+                        $term_id = is_array($term) ? $term['term_id'] : $term;
+                        error_log("Brand term '$product_brand' already exists, ID: $term_id");
+                    }
+
+                    if ($term_id) {
+                        $result = wp_set_object_terms($new_product_id, (int)$term_id, $brand_taxonomy, false);
+                        if (is_wp_error($result)) {
+                            error_log("Failed to assign brand '$product_brand' to product ID $new_product_id: " . $result->get_error_message());
+                        } else {
+                            error_log("Assigned brand '$product_brand' to product ID $new_product_id, term ID: $term_id");
+                        }
+                    }
                 }
 
                 if ($is_update && $needs_update) {

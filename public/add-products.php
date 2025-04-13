@@ -34,7 +34,7 @@ function syncwoo_perform_sync() {
         exit;
     }
 
-    $local_dir = WP_CONTENT_DIR . '/Uploads/syncwoo-json/';
+    $local_dir = WP_CONTENT_DIR . '/uploads/syncwoo-json/';
     if (!file_exists($local_dir)) {
         wp_mkdir_p($local_dir);
     }
@@ -45,8 +45,8 @@ function syncwoo_perform_sync() {
         $processed_count = isset($_POST['processed_count']) ? intval($_POST['processed_count']) : 0;
         $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 10;
 
-        $file_path_0 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_0.json';
-        $file_path_1 = WP_CONTENT_DIR . '/Uploads/syncwoo-json/product_1.json';
+        $file_path_0 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json';
+        $file_path_1 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json';
 
         $data = [];
         $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => []];

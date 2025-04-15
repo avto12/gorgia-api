@@ -1,4 +1,4 @@
-// countdown timer
+// Countdown timer for admin layout (for cron-based sync)
  
 document.addEventListener('DOMContentLoaded', function () {
     var countdownContainer = document.getElementById('countdown-timer');
@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateCountdown();
 });
 
-// Manuel start synce 
+// Batch sync (for manual sync with progress bar)
 document.addEventListener('DOMContentLoaded', function () {
     const syncButton = document.getElementById('syncwoo-button');
     const cancelButton = document.getElementById('syncwoo-cancel');
@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const delayBetweenBatches = 60 * 1000;
 
     if (!syncButton || !cancelButton || !resultDiv || !progressBar) {
-        console.error('One or more required elements are missing');
+        console.error('One or more required elements are missing for batch sync');
         return;
     }
 
@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 newCount += data.data.results.new_products;
                 updatedCount += data.data.results.updated_products;
                 deletedCount += data.data.results.deleted_products || 0;
-                totalProducts = data.data.total_products; // Use total from server
+                totalProducts = data.data.total_products;
 
                 const progressPercentage = totalProducts ? Math.min((processedCount / totalProducts) * 100, 100) : 0;
                 progressBar.style.width = `${progressPercentage}%`;
@@ -183,4 +183,232 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
- 
+// Manual sync (with batch processing)
+document.addEventListener('DOMContentLoaded', function () {
+    const manualSyncButton = document.getElementById('syncwoo-manual-button');
+    const manualCancelButton = document.getElementById('syncwoo-manual-cancel');
+    const manualResultDiv = document.getElementById('syncwoo-manual-result');
+    const manualProgressBar = document.querySelector('.progress-bar-manual');
+    let manualSyncInProgress = false;
+    let manualController = null;
+    let manualProcessedCount = 0;
+    let manualNewCount = 0;
+    let manualUpdatedCount = 0;
+    let manualDeletedCount = 0;
+    const batchSize = 10; // Process 10 products at a time
+    const delayBetweenBatches = 60 * 1000; // Delay between batches
+
+    if (!manualSyncButton || !manualCancelButton || !manualResultDiv || !manualProgressBar) {
+        console.error('One or more required elements are missing for manual sync');
+        return;
+    }
+
+    manualSyncButton.addEventListener('click', async function () {
+        if (manualSyncInProgress) {
+            alert("Manual sync is already in progress. Please wait.");
+            return;
+        }
+
+        manualSyncInProgress = true;
+        manualController = new AbortController();
+        const button = this;
+        button.disabled = true;
+        manualCancelButton.disabled = false;
+        button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
+
+        manualResultDiv.innerHTML = '<div class="notice notice-info"><p>Starting manual sync...</p></div>';
+        manualProgressBar.style.width = '0%';
+        manualProcessedCount = 0;
+        manualNewCount = 0;
+        manualUpdatedCount = 0;
+        manualDeletedCount = 0;
+
+        // Clear any scheduled cron jobs during manual sync
+        const responseClearCron = await fetch(syncwoo_vars.syncwoo_ajax_url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            },
+            body: new URLSearchParams({
+                action: 'syncwoo_clear_cron',
+                nonce: syncwoo_vars.syncwoo_nonce
+            })
+        });
+
+        if (!responseClearCron.ok) {
+            console.error('Failed to clear cron jobs');
+        }
+
+        try {
+            let totalProducts = null;
+
+            while (manualSyncInProgress) {
+                const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'application/json'
+                    },
+                    signal: manualController.signal,
+                    body: new URLSearchParams({
+                        action: 'syncwoo_perform_sync',
+                        nonce: syncwoo_vars.syncwoo_nonce,
+                        processed_count: manualProcessedCount,
+                        batch_size: batchSize
+                    })
+                });
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`Server error (${response.status}): ${text}`);
+                }
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.data?.message || 'Unknown error');
+                }
+
+                manualProcessedCount = data.data.processed_count;
+                manualNewCount += data.data.results.new_products;
+                manualUpdatedCount += data.data.results.updated_products;
+                manualDeletedCount += data.data.results.deleted_products || 0;
+                totalProducts = data.data.total_products;
+
+                const progressPercentage = totalProducts ? Math.min((manualProcessedCount / totalProducts) * 100, 100) : 0;
+                manualProgressBar.style.width = `${progressPercentage}%`;
+
+                manualResultDiv.innerHTML = `
+                    <div class="notice notice-success">
+                        <p>${data.data.message}</p>
+                        <p>Total Products in JSON: ${totalProducts}</p>
+                        <p>New Products: ${manualNewCount}</p>
+                        <p>Updated Products: ${manualUpdatedCount}</p>
+                        <p>Deleted Products: ${manualDeletedCount}</p>
+                        <p>Remaining: ${data.data.remaining}</p>
+                    </div>
+                `;
+
+                if (data.data.remaining === 0) {
+                    manualProgressBar.style.width = '100%';
+                    break;
+                }
+
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(resolve, delayBetweenBatches);
+                    manualCancelButton.addEventListener('click', () => {
+                        clearTimeout(timeout);
+                        manualController.abort();
+                    }, { once: true });
+                });
+            }
+
+            if (manualSyncInProgress) {
+                manualResultDiv.innerHTML = `
+                    <div class="notice notice-success">
+                        <p>Manual sync completed!</p>
+                        <p>Total Products in JSON: ${totalProducts}</p>
+                        <p>Total New Products: ${manualNewCount}</p>
+                        <p>Total Updated Products: ${manualUpdatedCount}</p>
+                        <p>Total Deleted Products: ${manualDeletedCount}</p>
+                    </div>
+                `;
+
+                // Mark initial manual sync as done
+                await fetch(syncwoo_vars.syncwoo_ajax_url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'application/json'
+                    },
+                    body: new URLSearchParams({
+                        action: 'syncwoo_mark_initial_manual_sync_done',
+                        nonce: syncwoo_vars.syncwoo_nonce
+                    })
+                });
+
+                // Reschedule cron after manual sync
+                await fetch(syncwoo_vars.syncwoo_ajax_url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'application/json'
+                    },
+                    body: new URLSearchParams({
+                        action: 'syncwoo_reschedule_cron',
+                        nonce: syncwoo_vars.syncwoo_nonce
+                    })
+                });
+            }
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
+                manualProgressBar.style.width = '0%';
+            } else {
+                console.error('Manual sync error:', error);
+                manualResultDiv.innerHTML = `
+                    <div class="notice notice-error">
+                        <p>Error: ${error.message}</p>
+                        <p>Check console or server logs</p>
+                    </div>
+                `;
+            }
+        } finally {
+            manualSyncInProgress = false;
+            button.disabled = false;
+            manualCancelButton.disabled = true;
+            button.textContent = 'Start Sync';
+            manualController = null;
+        }
+    });
+
+    manualCancelButton.addEventListener('click', function () {
+        if (manualController && manualSyncInProgress) {
+            manualController.abort();
+            manualSyncInProgress = false;
+            manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
+            manualProgressBar.style.width = '0%';
+            manualSyncButton.disabled = false;
+            manualSyncButton.textContent = 'Start Sync';
+            this.disabled = true;
+        }
+    });
+
+    // Countdown timer for product update frequency (for cron-based sync)
+    const countdownElement = document.getElementById('time-remaining-product-update');
+    const countdownContainer = document.getElementById('countdown-timer-product-update');
+    if (countdownElement && countdownContainer) {
+        let timeRemaining = parseInt(countdownContainer.getAttribute('data-remaining'), 10);
+
+        if (isNaN(timeRemaining)) {
+            console.error("Invalid time remaining value for product update countdown");
+            return;
+        }
+
+        if (timeRemaining > 0) {
+            const updateCountdown = () => {
+                if (timeRemaining <= 0) {
+                    countdownElement.textContent = 'Syncing now...';
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                    return;
+                }
+
+                const hours = Math.floor(timeRemaining / 3600);
+                const minutes = Math.floor((timeRemaining % 3600) / 60);
+                const seconds = timeRemaining % 60;
+
+                countdownElement.textContent = `${hours}h ${minutes}m ${seconds}s`;
+                timeRemaining--;
+
+                setTimeout(updateCountdown, 1000);
+            };
+
+            updateCountdown();
+        } else if (countdownElement.textContent === '') {
+            countdownElement.textContent = 'Disabled';
+        }
+    }
+});

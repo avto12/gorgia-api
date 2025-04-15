@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateCountdown();
 });
 
-
+// Manuel start synce 
 document.addEventListener('DOMContentLoaded', function () {
     const syncButton = document.getElementById('syncwoo-button');
     const cancelButton = document.getElementById('syncwoo-cancel');
@@ -182,3 +182,5 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 });
+
+ 

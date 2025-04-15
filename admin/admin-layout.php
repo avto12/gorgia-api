@@ -10,158 +10,60 @@ add_action('admin_enqueue_scripts', 'syncwoo_enqueue_style');
 if (!class_exists('sync_woo_json_importer')) {
     class sync_woo_json_importer {
         public function __construct() {
-            
             add_action('admin_menu', [$this, 'add_admin_menu']);
             add_action('admin_init', [$this, 'register_settings']);
             add_action('admin_post_syncwoo_manual_sync', [$this, 'handle_manual_sync']);
             add_action('syncwoo_scheduled_sync', [$this, 'perform_sync']);
-            
-            // Add cron schedule filter
             add_filter('cron_schedules', [$this, 'add_cron_schedules']);
-            
-            // // Schedule the cron job
-            // $this->schedule_cron();
         }
 
-        // Add custom cron schedules
         public function add_cron_schedules($schedules) {
-            // 1 minute interval
-            if (!isset($schedules['every_1_minute'])) {
-                $schedules['every_1_minute'] = array(
-                    'interval' => 60,
-                    'display' => __('Every 1 Minute', 'syncwoo')
-                );
+            $intervals = [
+                'every_1_minute' => 60,
+                'every_2_minutes' => 120,
+                'every_3_minutes' => 180,
+                'every_4_minutes' => 240,
+                'every_5_minutes' => 300,
+                'every_10_minutes' => 600,
+                'every_15_minutes' => 900,
+                'every_20_minutes' => 1200,
+                'every_30_minutes' => 1800,
+                'hourly' => 3600,
+                'every_2_hours' => 7200,
+                'every_3_hours' => 10800,
+                'every_4_hours' => 14400,
+                'every_5_hours' => 18000,
+                'three_times_a_day' => 28800,
+                'twicedaily' => 43200,
+                'daily' => 86400,
+                'weekly' => 604800,
+            ];
+
+            foreach ($intervals as $key => $interval) {
+                if (!isset($schedules[$key])) {
+                    $schedules[$key] = [
+                        'interval' => $interval,
+                        'display' => ucwords(str_replace('_', ' ', $key)),
+                    ];
+                }
             }
 
-            // 2 minutes interval
-            if (!isset($schedules['every_2_minutes'])) {
-                $schedules['every_2_minutes'] = array(
-                    'interval' => 120,
-                    'display' => __('Every 2 Minutes', 'syncwoo')
-                );
-            }
-
-            // 3 minutes interval
-            if (!isset($schedules['every_3_minutes'])) {
-                $schedules['every_3_minutes'] = array(
-                    'interval' => 180,
-                    'display' => __('Every 3 Minutes', 'syncwoo')
-                );
-            }
-
-            // 4 minutes interval
-            if (!isset($schedules['every_4_minutes'])) {
-                $schedules['every_4_minutes'] = array(
-                    'interval' => 240,
-                    'display' => __('Every 4 Minutes', 'syncwoo')
-                );
-            }
-
-            // 5  minutes interval
-            if (!isset($schedules['every_5_minutes'])) {
-                $schedules['every_5_minutes'] = array(
-                    'interval' => 300,
-                    'display' => __('Every 5 Minutes', 'syncwoo')
-                );
-            }
-            
-            // 10 minutes interval
-            if (!isset($schedules['every_10_minutes'])) {
-                $schedules['every_10_minutes'] = array(
-                    'interval' => 600,
-                    'display' => __('Every 10 Minutes', 'syncwoo')
-                );
-            }
-            
-            // 15 minutes interval
-            if (!isset($schedules['every_15_minutes'])) {
-                $schedules['every_15_minutes'] = array(
-                    'interval' => 900,
-                    'display' => __('Every 15 Minutes', 'syncwoo')
-                );
-            }
-            
-            // 20 minutes interval
-            if (!isset($schedules['every_20_minutes'])) {
-                $schedules['every_20_minutes'] = array(
-                    'interval' => 1200,
-                    'display' => __('Every 20 Minutes', 'syncwoo')
-                );
-            }
-            
-            // 30 minutes interval
-            if (!isset($schedules['every_30_minutes'])) {
-                $schedules['every_30_minutes'] = array(
-                    'interval' => 1800,
-                    'display' => __('Every 30 Minutes', 'syncwoo')
-                );
-            }
-
-
-            // 2 hours interval
-            if (!isset($schedules['every_2_hours'])) {
-                $schedules['every_2_hours'] = array(
-                    'interval' => 7200,
-                    'display' => __('Every 2 Hours', 'syncwoo')
-                );
-            }
-
-            // 3 hours interval
-            if (!isset($schedules['every_3_hours'])) {
-                $schedules['every_3_hours'] = array(
-                    'interval' => 10800,
-                    'display' => __('Every 3 Hours', 'syncwoo')
-                );
-            }
-
-            // 4 hours interval
-            if (!isset($schedules['every_4_hours'])) {
-                $schedules['every_4_hours'] = array(
-                    'interval' => 14400,
-                    'display' => __('Every 4 Hours', 'syncwoo')
-                );
-            }
-
-            // 5 hours interval
-            if (!isset($schedules['every_5_hours'])) {
-                $schedules['every_5_hours'] = array(
-                    'interval' => 18000,
-                    'display' => __('Every 5 Hours', 'syncwoo')
-                );
-            }
-
-            // 3 times a day
-            if (!isset($schedules['three_times_a_day'])) {
-                $schedules['three_times_a_day'] = array(
-                    'interval' => 28800, // 8 hours (3 times a day)
-                    'display' => __('Three times daily', 'syncwoo')
-                );
-            }
-
-             // Log the schedules for debugging
-            //  error_log('SyncWoo: Available cron schedules: ' . print_r($schedules, true));
-
-            
             return $schedules;
         }
 
-        // Schedule/reschedule the cron job
         public function schedule_cron() {
             $frequency = get_option('syncwoo_sync_frequency', 'hourly');
-            error_log('SyncWoo: Scheduling cron job with frequency: ' . $frequency);
-        
-            // Clear all existing scheduled hooks for 'syncwoo_scheduled_sync'
+            error_log('SyncWoo: Scheduling JSON sync cron job with frequency: ' . $frequency);
+
             while ($timestamp = wp_next_scheduled('syncwoo_scheduled_sync')) {
-                error_log('SyncWoo: Clearing existing scheduled hook at timestamp: ' . $timestamp);
+                error_log('SyncWoo: Clearing existing JSON sync scheduled hook at timestamp: ' . $timestamp);
                 wp_unschedule_event($timestamp, 'syncwoo_scheduled_sync');
             }
-        
-            // Schedule the new cron job
+
             wp_schedule_event(time(), $frequency, 'syncwoo_scheduled_sync');
-            error_log('SyncWoo: Cron job scheduled with frequency: ' . $frequency);
+            error_log('SyncWoo: JSON sync cron job scheduled with frequency: ' . $frequency);
         }
 
-        // Add admin menu
         public function add_admin_menu() {
             add_menu_page(
                 __('SyncWoo Settings', 'syncwoo'),
@@ -172,9 +74,17 @@ if (!class_exists('sync_woo_json_importer')) {
                 'dashicons-update',
                 55
             );
+
+            add_submenu_page(
+                'syncwoo',
+                __('Product Sync', 'syncwoo'),
+                __('Product Sync', 'syncwoo'),
+                'manage_options',
+                'syncwoo-product-sync',
+                [$this, 'render_product_sync_page']
+            );
         }
 
-        // Register plugin settings
         public function register_settings() {
             register_setting('syncwoo_settings', 'syncwoo_json_url_0', [
                 'type' => 'string',
@@ -232,7 +142,6 @@ if (!class_exists('sync_woo_json_importer')) {
             );
         }
 
-        // Render settings page
         public function render_settings_page() {
             if (!current_user_can('manage_options')) {
                 wp_die(__('You do not have sufficient permissions to access this page.', 'syncwoo'));
@@ -240,8 +149,7 @@ if (!class_exists('sync_woo_json_importer')) {
 
             ?>
             <div class="wrap">
-                <h1><?= esc_html__('SyncWoo JSON Settings', 'syncwoo'); ?></h1>
-
+                <h1><?php esc_html_e('SyncWoo JSON Settings', 'syncwoo'); ?></h1>
                 <form method="post" action="options.php">
                     <?php
                     settings_fields('syncwoo_settings');
@@ -252,74 +160,28 @@ if (!class_exists('sync_woo_json_importer')) {
 
                 <div class="syncwoo-actions">
                     <h2><?php esc_html_e('Manual Synchronization', 'syncwoo'); ?></h2>
-                    <form method="post" action="<?= esc_url(admin_url('admin-post.php')) ?>" id="syncwoo-sync-form">
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" id="syncwoo-sync-form">
                         <input type="hidden" name="action" value="syncwoo_manual_sync">
-                        <?php
-                        wp_nonce_field('syncwoo_manual_sync_action', 'syncwoo_manual_sync_nonce');
-                        ?>
+                        <?php wp_nonce_field('syncwoo_manual_sync_action', 'syncwoo_manual_sync_nonce'); ?>
                         <p>
-                            <input type="submit" class="button button-primary" value="<?php
-                            esc_attr_e('Run Sync Now', 'syncwoo');
-                            ?>">
+                            <input type="submit" class="button button-primary" value="<?php esc_attr_e('Run Sync Now', 'syncwoo'); ?>">
                             <span class="description">
                                 <?php
-                                esc_html_e('Last sync: ', 'syncwoo');
+                                esc_html_e('Last JSON sync: ', 'syncwoo');
                                 echo get_option('syncwoo_last_sync') ? esc_html(get_option('syncwoo_last_sync')) : __('Never', 'syncwoo');
                                 ?>
-                        </span>
+                            </span>
                         </p>
                     </form>
                 </div>
             </div>
-
-            <div class="wrap">
-            <?php
-                // Define the JSON files
-                $json_files = [
-                    'product_0' => WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json',
-                    'product_1' => WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json',
-                ];
-
-                // Loop through each JSON file
-                foreach ($json_files as $key => $json_file) {
-                    if (file_exists($json_file)) {
-                        $json_data = file_get_contents($json_file);
-                        $data = json_decode($json_data, true);
-
-                        if (json_last_error() !== JSON_ERROR_NONE) {
-                            echo '<p>' . esc_html__('Invalid JSON file: ', 'syncwoo') . $key . ' - ' . json_last_error_msg() . '</p>';
-                        } else {
-                            $product_count = is_array($data) ? count($data) : 0;
-
-                            echo '<p>' . esc_html__('Total Products in JSON file ', 'syncwoo') . esc_html($key) . ': <strong>' . esc_html($product_count) . '</strong></p>';
-                        }
-                    } else {
-                        echo '<p>' . esc_html__('JSON file not found: ', 'syncwoo') . esc_html($key) . '</p>';
-                    }
-                }
-                ?>
-
-                <h1><?php _e('SyncWoo - Product Sync', 'syncwoo'); ?></h1>
-                <p><?php _e('Click "Sync Now" to start syncing products from the JSON file.', 'syncwoo'); ?></p>
-
-                <button id="syncwoo-button" class="button button-primary">Start Sync</button>
-                <button id="syncwoo-cancel" class="button">Cancel</button>
-                <div id="syncwoo-result"></div>
-                <div style="width: 100%; background: #e1e1e1; height: 20px; margin-top: 10px;">
-                <div class="progress-bar" style="width: 0%; height: 100%; background: #7008e7;"></div>
-                </div>
-                <div id="syncwoo-result"></div>
- 
- 
-
-
-
-            </div>
-
             <?php
         }
 
-        // Handle manual sync
+        public function render_product_sync_page() {
+            do_action('syncwoo_render_product_sync_page');
+        }
+
         public function handle_manual_sync() {
             if (!current_user_can('manage_options') ||
                 !isset($_POST['syncwoo_manual_sync_nonce']) ||
@@ -330,30 +192,24 @@ if (!class_exists('sync_woo_json_importer')) {
             $result = $this->perform_sync();
 
             if ($result['success']) {
-                // Update the last sync time
                 update_option('syncwoo_last_sync', current_time('mysql'));
                 add_settings_error('syncwoo_messages', 'syncwoo_message', $result['message'], 'updated');
             } else {
                 add_settings_error('syncwoo_messages', 'syncwoo_message', $result['message'], 'error');
             }
-        
+
             set_transient('settings_errors', get_settings_errors(), 30);
-        
             wp_safe_redirect(admin_url('admin.php?page=syncwoo'));
             exit;
         }
 
-        // Perform the actual sync
         public function perform_sync() {
-            // $json_url = get_option('syncwoo_json_url');
             $json_urls = [
                 'product_0' => get_option('syncwoo_json_url_0'),
                 'product_1' => get_option('syncwoo_json_url_1')
             ];
 
-
-            // error_log('SyncWoo: Starting sync process for URL: ' . $json_urls);
-            error_log('SyncWoo: Starting sync process for URLs: ' . print_r($json_urls, true));
+            error_log('SyncWoo: Starting JSON sync process for URLs: ' . print_r($json_urls, true));
 
             if (empty($json_urls['product_0']) && empty($json_urls['product_1'])) {
                 error_log('SyncWoo: No JSON URL configured');
@@ -367,108 +223,79 @@ if (!class_exists('sync_woo_json_importer')) {
                 $upload_dir = wp_upload_dir();
                 $local_dir = $upload_dir['basedir'] . '/syncwoo-json/';
 
-                // Ensure directory exists and is writable
                 if (!file_exists($local_dir)) {
                     if (!wp_mkdir_p($local_dir)) {
                         throw new Exception(__('Failed to create directory', 'syncwoo'));
                     }
                 }
 
+                $data = [];
+                $errors = [];
                 foreach ($json_urls as $key => $json_url) {
                     if (empty($json_url)) {
                         error_log('SyncWoo: No URL configured for ' . $key);
                         continue;
                     }
-        
-                    // Validate the URL
+
                     if (!filter_var($json_url, FILTER_VALIDATE_URL)) {
                         error_log('SyncWoo: Invalid URL provided for ' . $key);
+                        $errors[] = sprintf(__('Invalid URL provided for %s', 'syncwoo'), $key);
                         continue;
                     }
-                    
-                    // Get JSON data
+
                     $response = wp_remote_get($json_url, [
                         'timeout' => 30,
                         'sslverify' => false,
                     ]);
 
                     if (is_wp_error($response)) {
-                        // Add user-facing error message
                         $errors[] = sprintf(__('Failed to fetch data from %s: %s', 'syncwoo'), $json_url, $response->get_error_message());
                         error_log('SyncWoo Error: Failed to fetch data from ' . $json_url . '. Error: ' . $response->get_error_message());
-                        continue; // Skip to the next URL
+                        continue;
                     }
-        
-                    if (is_wp_error($response)) {
-                        throw new Exception($response->get_error_message());
-                    }
-        
+
                     $response_code = wp_remote_retrieve_response_code($response);
                     if ($response_code !== 200) {
                         throw new Exception(sprintf(__('API returned HTTP status: %d', 'syncwoo'), $response_code));
                     }
-        
+
                     $body = wp_remote_retrieve_body($response);
-                    $data = json_decode($body, true);
-        
+                    $json_data = json_decode($body, true);
+
                     if (json_last_error() !== JSON_ERROR_NONE) {
                         throw new Exception(__('Invalid JSON response', 'syncwoo'));
                     }
-        
-                    // Save the file for each URL
+
+                    $data = array_merge($data, $json_data);
+
                     $local_file = $local_dir . $key . '.json';
-                    $result = file_put_contents($local_file, json_encode($data, JSON_PRETTY_PRINT));
-        
+                    $result = file_put_contents($local_file, json_encode($json_data, JSON_PRETTY_PRINT));
+
                     if ($result === false) {
                         throw new Exception(__('Failed to save JSON file. Check permissions.', 'syncwoo'));
                     }
-        
+
                     error_log('SyncWoo: File saved successfully for URL ' . $json_url . '. Bytes written: ' . $result);
                 }
 
-                // Process data
-                $processed = $this->process_json_data($data);
-
-                // Update last sync time
                 update_option('syncwoo_last_sync', current_time('mysql'));
 
                 return [
                     'success' => true,
-                    'message' => sprintf(__('Successfully synchronized %d products', 'syncwoo'), $processed['count']),
-                    'data' => $processed
+                    'message' => __('JSON files synchronized successfully', 'syncwoo'),
+                    'data' => $data,
+                    'errors' => $errors
                 ];
-
             } catch (Exception $e) {
                 error_log('SyncWoo Error: ' . $e->getMessage());
                 return [
                     'success' => false,
-                    'message' => __('Sync failed: ', 'syncwoo') . $e->getMessage()
+                    'message' => __('JSON sync failed: ', 'syncwoo') . $e->getMessage(),
+                    'errors' => $errors
                 ];
             }
         }
 
-        // Process JSON data (placeholder for your import logic)
-        private function process_json_data($data) {
-            // Implement your actual WooCommerce product import logic here
-            // This is just a placeholder structure
-
-            $count = 0;
-            $errors = [];
-
-            if (isset($data['products']) && is_array($data['products'])) {
-                $count = count($data['products']);
-                // Process each product
-            }
-
-            return [
-                'count' => $count,
-                'errors' => $errors
-            ];
-        }
-
- 
-
-        // Settings field renderers
         public function render_section_header() {
             echo '<p>' . esc_html__('Configure your JSON product feed synchronization settings below.', 'syncwoo') . '</p>';
         }
@@ -486,10 +313,8 @@ if (!class_exists('sync_woo_json_importer')) {
 
         public function render_sync_frequency_field() {
             $frequency = get_option('syncwoo_sync_frequency', 'hourly');
-            error_log('SyncWoo: Current sync frequency from options: ' . $frequency);
             $schedules = wp_get_schedules();
 
-            // Define all available intervals
             $available = [
                 'every_1_minute',
                 'every_2_minutes',
@@ -523,91 +348,76 @@ if (!class_exists('sync_woo_json_importer')) {
             ?>
             <div class="description">
                 <?php
-                    echo '<span class="last-sync">' . esc_html__('Last sync: ', 'syncwoo') . '</span>';
+                echo '<span class="last-sync">' . esc_html__('Last JSON sync: ', 'syncwoo') . '</span>';
+                ?>
+                <span class="last-sync"><?php
+                echo get_option('syncwoo_last_sync') ? esc_html(get_option('syncwoo_last_sync')) : __('Never', 'syncwoo');
+                ?></span>
+                <hr>
+                <span class="sync-interval">
+                    <?php
+                    $frequency = get_option('syncwoo_sync_frequency', 'hourly');
+                    $schedules = wp_get_schedules();
+
+                    $time_remaining = 0;
+                    if (isset($schedules[$frequency])) {
+                        $next_sync_timestamp = wp_next_scheduled('syncwoo_scheduled_sync');
+                        $current_time = time();
+
+                        if ($next_sync_timestamp) {
+                            $time_remaining = $next_sync_timestamp - $current_time;
+                        }
+                    }
                     ?>
-                    <span class="last-sync"><?php
-                    echo get_option('syncwoo_last_sync') ? esc_html(get_option('syncwoo_last_sync')) : __('Never', 'syncwoo');  
-                    ?></span>
-                    <hr>
-                    <span class="sync-interval">
-                        <?php
-                            $frequency = get_option('syncwoo_sync_frequency', 'hourly'); // Get the selected frequency
-                            $schedules = wp_get_schedules(); // Get all available schedules
-
-                            if (isset($schedules[$frequency])) {
-                                $interval_in_seconds = $schedules[$frequency]['interval']; // Get interval in seconds
-
-                                // Get the next scheduled sync time
-                                $next_sync_timestamp = wp_next_scheduled('syncwoo_scheduled_sync');
-                                $current_time = time();
-
-                                if ($next_sync_timestamp) {
-                                    $time_remaining = $next_sync_timestamp - $current_time; // Calculate remaining time in seconds
-                                } else {
-                                    $time_remaining = 0; // No sync scheduled
-                                }
-                            } else {
-                                $time_remaining = 0; // Invalid frequency
-                            }
-                            ?>
-                            <div id="countdown-timer" data-remaining="<?php echo esc_attr($time_remaining); ?>">
-                                <span><?php esc_html_e('Time until next sync: ', 'syncwoo'); ?></span>
-                                <span id="time-remaining"></span>
-                            </div>
+                    <div id="countdown-timer" data-remaining="<?php echo esc_attr($time_remaining); ?>">
+                        <span><?php esc_html_e('Time until next JSON sync: ', 'syncwoo'); ?></span>
+                        <span id="time-remaining"></span>
+                    </div>
                 </span>
                 <hr>
-                    <span class="first-sync">
-                        <?php
-                        echo esc_html__('Note: When active plugin. First, click the "Run Sync Now" button below and then select the interval above.', 'syncwoo');
-                        ?>
-                    </span>
-                    <hr>
-                    <?php
-                    echo '<br>' . esc_html__('Note: The frequency of the sync may be affected by your server settings.', 'syncwoo');
-                    echo '<br>' . esc_html__('For example, if your server has a limit of 1 request per minute, the sync will not run more frequently than that.', 'syncwoo');
-                    echo '<hr>' . esc_html__('If you want to run the sync manually, click the "Run Sync Now" button below.', 'syncwoo');
-                    echo '<br>' . esc_html__('Happy syncing!', 'syncwoo');
+                <span class="first-sync">
+                    <?php esc_html_e('Note: When active plugin. First, click the "Run Sync Now" button below and then select the interval above.', 'syncwoo'); ?>
+                </span>
+                <hr>
+                <?php
+                echo '<br>' . esc_html__('Note: The frequency of the JSON sync may be affected by your server settings.', 'syncwoo');
+                echo '<br>' . esc_html__('For example, if your server has a limit of 1 request per minute, the sync will not run more frequently than that.', 'syncwoo');
+                echo '<hr>' . esc_html__('If you want to run the JSON sync manually, click the "Run Sync Now" button below.', 'syncwoo');
+                echo '<br>' . esc_html__('Happy syncing!', 'syncwoo');
                 ?>
             </div>
             <?php
         }
     }
 
-    // Initialize the plugin
     new sync_woo_json_importer();
- 
-    // Improved activation hook
+
     register_activation_hook(__FILE__, function() {
         $upload_dir = wp_upload_dir();
         $local_dir = trailingslashit($upload_dir['basedir']) . 'syncwoo-json/';
-        
+
         if (!file_exists($local_dir)) {
             wp_mkdir_p($local_dir);
             file_put_contents($local_dir . 'index.php', "<?php\n// Silence is golden");
             file_put_contents($local_dir . '.htaccess', "Options -Indexes\n<FilesMatch \"\\.(php)$\">\n    Deny from all\n</FilesMatch>\n<FilesMatch \"\\.(css|js)$\">\n    Allow from all\n</FilesMatch>");
         }
-        
-        // Force immediate cron schedule setup
+
         $importer = new sync_woo_json_importer();
         $importer->schedule_cron();
     });
 
-    // Improved deactivation hook
     register_deactivation_hook(__FILE__, function() {
         wp_clear_scheduled_hook('syncwoo_scheduled_sync');
     });
 
     add_action('update_option_syncwoo_sync_frequency', function($old_value, $new_value) {
         if ($old_value !== $new_value) {
-            error_log('SyncWoo: Sync frequency updated from ' . $old_value . ' to ' . $new_value);
-    
-            // Reschedule the cron job with the new frequency
+            error_log('SyncWoo: JSON sync frequency updated from ' . $old_value . ' to ' . $new_value);
             $importer = new sync_woo_json_importer();
             $importer->schedule_cron();
         }
     }, 10, 2);
 
-    // Add admin notice for successful sync
     add_action('admin_notices', function () {
         if (isset($_GET['sync']) && $_GET['sync'] === 'success') {
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Sync completed successfully!', 'syncwoo') . '</p></div>';

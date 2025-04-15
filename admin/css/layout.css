@@ -29,3 +29,44 @@
   border-radius: 8px;
   margin: 10px 0;
  }
+
+
+ .wrap {
+  margin-left: 0 !important;
+  padding: 20px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.syncwoo-product-update-frequency {
+  margin-top: 30px;
+  padding: 20px;
+  background: #f9f9f9;
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.syncwoo-product-update-frequency h2 {
+  margin-top: 0;
+}
+
+.description {
+  margin-top: 10px;
+  color: #666;
+}
+
+#wpbody-content .wrap {
+  padding-left: 0;
+  padding-right: 20px;
+}
+
+@media screen and (max-width: 782px) {
+  .wrap {
+      padding: 10px;
+  }
+
+  .syncwoo-product-update-frequency {
+      padding: 10px;
+  }
+}

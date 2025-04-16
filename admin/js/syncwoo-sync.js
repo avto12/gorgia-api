@@ -33,29 +33,81 @@ document.addEventListener('DOMContentLoaded', function () {
     updateCountdown();
 });
 
-// Batch sync (for manual sync with progress bar)
+// Wait for the DOM to be fully loaded before executing the script
 document.addEventListener('DOMContentLoaded', function () {
+    // --- Countdown Timer for Cron-Based Sync ---
+    // Get the countdown elements from the DOM
+    const countdownElement = document.getElementById('time-remaining-product-update');
+    const countdownContainer = document.getElementById('countdown-timer-product-update');
+
+    // Check if countdown elements exist
+    if (countdownElement && countdownContainer) {
+        let timeRemaining = parseInt(countdownContainer.getAttribute('data-remaining'), 10);
+
+        // Validate the time remaining value
+        if (isNaN(timeRemaining)) {
+            console.error("Invalid time remaining value for product update countdown");
+        } else if (timeRemaining > 0) {
+            // Function to update the countdown timer every second
+            const updateCountdown = () => {
+                if (timeRemaining <= 0) {
+                    countdownElement.textContent = 'Syncing now...';
+                    // Reload the page after 1 second to reflect the cron sync
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                    return;
+                }
+
+                // Calculate hours, minutes, and seconds from the remaining time
+                const hours = Math.floor(timeRemaining / 3600);
+                const minutes = Math.floor((timeRemaining % 3600) / 60);
+                const seconds = timeRemaining % 60;
+
+                countdownElement.textContent = `${hours}h ${minutes}m ${seconds}s`;
+                timeRemaining--;
+
+                // Continue the countdown every second
+                setTimeout(updateCountdown, 1000);
+            };
+
+            // Start the countdown
+            updateCountdown();
+        } else if (countdownElement.textContent === '') {
+            countdownElement.textContent = 'Disabled';
+        }
+    } else {
+        console.warn('Countdown timer elements not found. Skipping countdown functionality.');
+    }
+
+    // --- Manual Sync with Batch Processing ---
+    // Get the elements for manual sync
     const syncButton = document.getElementById('syncwoo-manual-button');
     const cancelButton = document.getElementById('syncwoo-manual-cancel');
     const resultDiv = document.getElementById('syncwoo-manual-result');
     const progressBar = document.querySelector('.progress-bar-manual');
+
+    // Initialize sync state variables
     let syncInProgress = false;
     let controller = null;
     let processedCount = 0;
     let newCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
-    const batchSize = 10;
-    const delayBetweenBatches = 60 * 1000;
+    const batchSize = 10; // Process 10 products at a time
+    const delayBetweenBatches = 60 * 1000; // Delay between batches in milliseconds (60 seconds)
 
+    // Check if all required elements for manual sync exist
     if (!syncButton || !cancelButton || !resultDiv || !progressBar) {
-        console.error('One or more required elements are missing for batch sync');
+        console.warn('One or more required elements are missing for manual sync. Skipping sync functionality.');
         return;
     }
 
+    // Add event listener for the "Start Sync" button
     syncButton.addEventListener('click', async function () {
+        // Prevent multiple syncs from running simultaneously
         if (syncInProgress) {
-            alert("Sync is already in progress. Please wait.");
+            alert("Manual sync is already in progress. Please wait.");
             return;
         }
 
@@ -66,164 +118,13 @@ document.addEventListener('DOMContentLoaded', function () {
         cancelButton.disabled = false;
         button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
 
-        resultDiv.innerHTML = '<div class="notice notice-info"><p>Starting sync...</p></div>';
+        // Reset UI and counters
+        resultDiv.innerHTML = '<div class="notice notice-info"><p>Starting manual sync...</p></div>';
         progressBar.style.width = '0%';
         processedCount = 0;
         newCount = 0;
         updatedCount = 0;
         deletedCount = 0;
-
-        try {
-            let totalProducts = null;
-
-            while (syncInProgress) {
-                const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Accept': 'application/json'
-                    },
-                    signal: controller.signal,
-                    body: new URLSearchParams({
-                        action: 'syncwoo_perform_sync',
-                        nonce: syncwoo_vars.syncwoo_nonce,
-                        processed_count: processedCount,
-                        batch_size: batchSize
-                    })
-                });
-
-                if (!response.ok) {
-                    const text = await response.text();
-                    throw new Error(`Server error (${response.status}): ${text}`);
-                }
-
-                const data = await response.json();
-                if (!data.success) {
-                    throw new Error(data.data?.message || 'Unknown error');
-                }
-
-                processedCount = data.data.processed_count;
-                newCount += data.data.results.new_products;
-                updatedCount += data.data.results.updated_products;
-                deletedCount += data.data.results.deleted_products || 0;
-                totalProducts = data.data.total_products;
-
-                const progressPercentage = totalProducts && totalProducts > 0 
-                ? Math.min((processedCount / totalProducts) * 100, 100) 
-                : 0;
-            progressBar.style.width = `${progressPercentage.toFixed(2)}%`;
-
-                resultDiv.innerHTML = `
-                    <div class="notice notice-success">
-                        <p>${data.data.message}</p>
-                        <p>Total Products in JSON: ${totalProducts}</p>
-                        <p>New Products: ${newCount}</p>
-                        <p>Updated Products: ${updatedCount}</p>
-                        <p>Deleted Products: ${deletedCount}</p>
-                        <p>Remaining: ${data.data.remaining}</p>
-                    </div>
-                `;
-
-                if (data.data.remaining === 0) {
-                    progressBar.style.width = '100%';
-                    break;
-                }
-
-                await new Promise((resolve) => {
-                    const timeout = setTimeout(resolve, delayBetweenBatches);
-                    cancelButton.addEventListener('click', () => {
-                        clearTimeout(timeout);
-                        controller.abort();
-                    }, { once: true });
-                });
-            }
-
-            if (syncInProgress) {
-                resultDiv.innerHTML = `
-                    <div class="notice notice-success">
-                        <p>Sync completed!</p>
-                        <p>Total Products in JSON: ${totalProducts}</p>
-                        <p>Total New Products: ${newCount}</p>
-                        <p>Total Updated Products: ${updatedCount}</p>
-                        <p>Total Deleted Products: ${deletedCount}</p>
-                    </div>
-                `;
-            }
-
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                resultDiv.innerHTML = '<div class="notice notice-warning"><p>Sync cancelled</p></div>';
-                progressBar.style.width = '0%';
-            } else {
-                console.error('Sync error:', error);
-                resultDiv.innerHTML = `
-                    <div class="notice notice-error">
-                        <p>Error: ${error.message}</p>
-                        <p>Check console or server logs</p>
-                    </div>
-                `;
-            }
-        } finally {
-            syncInProgress = false;
-            button.disabled = false;
-            cancelButton.disabled = true;
-            button.textContent = 'Sync Now';
-            controller = null;
-        }
-    });
-
-    cancelButton.addEventListener('click', function () {
-        if (controller && syncInProgress) {
-            controller.abort();
-            syncInProgress = false;
-            resultDiv.innerHTML = '<div class="notice notice-warning"><p>Sync cancelled</p></div>';
-            progressBar.style.width = '0%';
-            syncButton.disabled = false;
-            syncButton.textContent = 'Sync Now';
-            this.disabled = true;
-        }
-    });
-});
-
-// Manual sync (with batch processing)
-document.addEventListener('DOMContentLoaded', function () {
-    const manualSyncButton = document.getElementById('syncwoo-manual-button');
-    const manualCancelButton = document.getElementById('syncwoo-manual-cancel');
-    const manualResultDiv = document.getElementById('syncwoo-manual-result');
-    const manualProgressBar = document.querySelector('.progress-bar-manual');
-    let manualSyncInProgress = false;
-    let manualController = null;
-    let manualProcessedCount = 0;
-    let manualNewCount = 0;
-    let manualUpdatedCount = 0;
-    let manualDeletedCount = 0;
-    const batchSize = 10; // Process 10 products at a time
-    const delayBetweenBatches = 60 * 1000; // Delay between batches
-
-    if (!manualSyncButton || !manualCancelButton || !manualResultDiv || !manualProgressBar) {
-        console.error('One or more required elements are missing for manual sync');
-        return;
-    }
-
-    manualSyncButton.addEventListener('click', async function () {
-        if (manualSyncInProgress) {
-            alert("Manual sync is already in progress. Please wait.");
-            return;
-        }
-
-        manualSyncInProgress = true;
-        manualController = new AbortController();
-        const button = this;
-        button.disabled = true;
-        manualCancelButton.disabled = false;
-        button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
-
-        manualResultDiv.innerHTML = '<div class="notice notice-info"><p>Starting manual sync...</p></div>';
-        manualProgressBar.style.width = '0%';
-        manualProcessedCount = 0;
-        manualNewCount = 0;
-        manualUpdatedCount = 0;
-        manualDeletedCount = 0;
 
         // Clear any scheduled cron jobs during manual sync
         const responseClearCron = await fetch(syncwoo_vars.syncwoo_ajax_url, {
@@ -245,22 +146,25 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             let totalProducts = null;
 
-            while (manualSyncInProgress) {
+            // Process batches until all products are synced or sync is cancelled
+            while (syncInProgress) {
+                // Send AJAX request to process a batch of products
                 const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                         'Accept': 'application/json'
                     },
-                    signal: manualController.signal,
+                    signal: controller.signal,
                     body: new URLSearchParams({
                         action: 'syncwoo_perform_sync',
                         nonce: syncwoo_vars.syncwoo_nonce,
-                        processed_count: manualProcessedCount,
+                        processed_count: processedCount,
                         batch_size: batchSize
                     })
                 });
 
+                // Check if the response is successful
                 if (!response.ok) {
                     const text = await response.text();
                     throw new Error(`Server error (${response.status}): ${text}`);
@@ -271,54 +175,60 @@ document.addEventListener('DOMContentLoaded', function () {
                     throw new Error(data.data?.message || 'Unknown error');
                 }
 
-                manualProcessedCount = data.data.processed_count;
-                manualNewCount += data.data.results.new_products;
-                manualUpdatedCount += data.data.results.updated_products;
-                manualDeletedCount += data.data.results.deleted_products || 0;
+                // Update counters with the response data
+                processedCount = data.data.processed_count;
+                newCount += data.data.results.new_products;
+                updatedCount += data.data.results.updated_products;
+                deletedCount += data.data.results.deleted_products || 0;
                 totalProducts = data.data.total_products;
 
+                // Calculate and update the progress bar
                 const progressPercentage = totalProducts && totalProducts > 0 
-                ? Math.min((manualProcessedCount / totalProducts) * 100, 100) 
-                : 0;
-            manualProgressBar.style.width = `${progressPercentage.toFixed(2)}%`;
+                    ? Math.min((processedCount / totalProducts) * 100, 100) 
+                    : 0;
+                progressBar.style.width = `${progressPercentage.toFixed(2)}%`;
 
-                manualResultDiv.innerHTML = `
+                // Display the current sync status
+                resultDiv.innerHTML = `
                     <div class="notice notice-success">
                         <p>${data.data.message}</p>
                         <p>Total Products in JSON: ${totalProducts}</p>
-                        <p>New Products: ${manualNewCount}</p>
-                        <p>Updated Products: ${manualUpdatedCount}</p>
-                        <p>Deleted Products: ${manualDeletedCount}</p>
+                        <p>New Products: ${newCount}</p>
+                        <p>Updated Products: ${updatedCount}</p>
+                        <p>Deleted Products: ${deletedCount}</p>
                         <p>Remaining: ${data.data.remaining}</p>
                     </div>
                 `;
 
+                // Break the loop if there are no more products to process
                 if (data.data.remaining === 0) {
-                    manualProgressBar.style.width = '100%';
+                    progressBar.style.width = '100%';
                     break;
                 }
 
+                // Wait for the specified delay between batches, allowing cancellation
                 await new Promise((resolve) => {
                     const timeout = setTimeout(resolve, delayBetweenBatches);
-                    manualCancelButton.addEventListener('click', () => {
+                    cancelButton.addEventListener('click', () => {
                         clearTimeout(timeout);
-                        manualController.abort();
+                        controller.abort();
                     }, { once: true });
                 });
             }
 
-            if (manualSyncInProgress) {
-                manualResultDiv.innerHTML = `
+            // Display the final sync result if sync was not cancelled
+            if (syncInProgress) {
+                resultDiv.innerHTML = `
                     <div class="notice notice-success">
                         <p>Manual sync completed!</p>
                         <p>Total Products in JSON: ${totalProducts}</p>
-                        <p>Total New Products: ${manualNewCount}</p>
-                        <p>Total Updated Products: ${manualUpdatedCount}</p>
-                        <p>Total Deleted Products: ${manualDeletedCount}</p>
+                        <p>Total New Products: ${newCount}</p>
+                        <p>Total Updated Products: ${updatedCount}</p>
+                        <p>Total Deleted Products: ${deletedCount}</p>
                     </div>
                 `;
 
-                // Mark initial manual sync as done
+                // Mark the initial manual sync as done
                 await fetch(syncwoo_vars.syncwoo_ajax_url, {
                     method: 'POST',
                     headers: {
@@ -344,14 +254,15 @@ document.addEventListener('DOMContentLoaded', function () {
                     })
                 });
             }
-
         } catch (error) {
+            // Handle cancellation
             if (error.name === 'AbortError') {
-                manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
-                manualProgressBar.style.width = '0%';
+                resultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
+                progressBar.style.width = '0%';
             } else {
+                // Handle other errors
                 console.error('Manual sync error:', error);
-                manualResultDiv.innerHTML = `
+                resultDiv.innerHTML = `
                     <div class="notice notice-error">
                         <p>Error: ${error.message}</p>
                         <p>Check console or server logs</p>
@@ -359,60 +270,25 @@ document.addEventListener('DOMContentLoaded', function () {
                 `;
             }
         } finally {
-            manualSyncInProgress = false;
+            // Reset the sync state and UI
+            syncInProgress = false;
             button.disabled = false;
-            manualCancelButton.disabled = true;
+            cancelButton.disabled = true;
             button.textContent = 'Start Sync';
-            manualController = null;
+            controller = null;
         }
     });
 
-    manualCancelButton.addEventListener('click', function () {
-        if (manualController && manualSyncInProgress) {
-            manualController.abort();
-            manualSyncInProgress = false;
-            manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
-            manualProgressBar.style.width = '0%';
-            manualSyncButton.disabled = false;
-            manualSyncButton.textContent = 'Start Sync';
+    // Add event listener for the "Cancel" button
+    cancelButton.addEventListener('click', function () {
+        if (controller && syncInProgress) {
+            controller.abort();
+            syncInProgress = false;
+            resultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
+            progressBar.style.width = '0%';
+            syncButton.disabled = false;
+            syncButton.textContent = 'Start Sync';
             this.disabled = true;
         }
     });
-
-    // Countdown timer for product update frequency (for cron-based sync)
-    const countdownElement = document.getElementById('time-remaining-product-update');
-    const countdownContainer = document.getElementById('countdown-timer-product-update');
-    if (countdownElement && countdownContainer) {
-        let timeRemaining = parseInt(countdownContainer.getAttribute('data-remaining'), 10);
-
-        if (isNaN(timeRemaining)) {
-            console.error("Invalid time remaining value for product update countdown");
-            return;
-        }
-
-        if (timeRemaining > 0) {
-            const updateCountdown = () => {
-                if (timeRemaining <= 0) {
-                    countdownElement.textContent = 'Syncing now...';
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
-                    return;
-                }
-
-                const hours = Math.floor(timeRemaining / 3600);
-                const minutes = Math.floor((timeRemaining % 3600) / 60);
-                const seconds = timeRemaining % 60;
-
-                countdownElement.textContent = `${hours}h ${minutes}m ${seconds}s`;
-                timeRemaining--;
-
-                setTimeout(updateCountdown, 1000);
-            };
-
-            updateCountdown();
-        } else if (countdownElement.textContent === '') {
-            countdownElement.textContent = 'Disabled';
-        }
-    }
 });

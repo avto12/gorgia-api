@@ -1012,38 +1012,33 @@ add_action('syncwoo_product_update_sync', function () {
     $data = [];
     $errors = [];
 
-    // Load JSON files
     foreach ($json_files as $key => $json_file) {
+        error_log("SyncWoo: Checking file: $json_file");
         if (file_exists($json_file)) {
             $json_data = file_get_contents($json_file);
+            error_log("SyncWoo: File $json_file loaded successfully");
             $decoded_data = json_decode($json_data, true);
-
             if (json_last_error() !== JSON_ERROR_NONE) {
                 $errors[] = sprintf(__('Invalid JSON file: %s - %s', 'syncwoo'), $key, json_last_error_msg());
-                error_log('SyncWoo Error: Invalid JSON file: ' . $key . ' - ' . json_last_error_msg());
+                error_log("SyncWoo Error: Invalid JSON file: $key - " . json_last_error_msg());
                 continue;
             }
-
             $data = array_merge($data, $decoded_data);
             error_log("SyncWoo: Loaded " . count($decoded_data) . " products from $key (cron sync)");
         } else {
             $errors[] = sprintf(__('JSON file not found: %s', 'syncwoo'), $key);
-            error_log('SyncWoo Error: JSON file not found: ' . $key);
+            error_log("SyncWoo Error: JSON file not found: $key");
         }
     }
 
     if (empty($data)) {
         error_log('SyncWoo: No data to process for product update (cron sync)');
-        return [
-            'success' => false,
-            'message' => __('No data to process for product update', 'syncwoo'),
-            'errors' => $errors
-        ];
+        return ['success' => false, 'message' => __('No data to process for product update', 'syncwoo'), 'errors' => $errors];
     }
 
     try {
         $total_products = count($data);
-        $batch_size = 10; // Process 10 products per cron run
+        $batch_size = 10;
         $processed_count = get_option('syncwoo_processed_count', 0);
         $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => $errors];
 
@@ -1051,51 +1046,56 @@ add_action('syncwoo_product_update_sync', function () {
 
         $products_to_process = array_slice($data, $processed_count, $batch_size);
 
-        // Get all SKUs from JSON
+        $snapshot = get_option('syncwoo_product_snapshot', []);
+        $current_snapshot = [];
+        foreach ($data as $product) {
+            if (isset($product['barcode']) && isset($product['last_update'])) {
+                $current_snapshot[$product['barcode']] = [
+                    'last_update' => $product['last_update'],
+                    'name' => $product['product'] ?? '',
+                    'price' => $product['price'] ?? '',
+                    'list_price' => $product['list_price'] ?? '',
+                    'amount' => $product['amount'] ?? 0,
+                    'weight' => $product['weight'] ?? 0,
+                    'description' => $product['description'] ?? ''
+                ];
+            }
+        }
+
         $json_skus = array_map(function ($product) {
             return sanitize_text_field($product['barcode'] ?? '');
         }, $data);
+        error_log("SyncWoo: Found " . count($json_skus) . " unique SKUs in JSON");
 
-        // Step 1: Delete products that are no longer in JSON (only on first batch)
-        if ($processed_count === 0) {
-            $existing_products = wc_get_products([
-                'limit' => -1,
-                'status' => 'publish',
-                'return' => 'objects'
-            ]);
-
+        if (function_exists('wc_get_products')) {
+            $existing_products = wc_get_products(['limit' => -1, 'status' => 'publish', 'return' => 'objects']);
+            error_log("SyncWoo: Retrieved " . count($existing_products) . " existing products");
             foreach ($existing_products as $existing_product) {
                 $sku = $existing_product->get_sku();
-                if (!in_array($sku, $json_skus)) {
+                if (!in_array($sku, $json_skus) && $existing_product->get_status() === 'publish') {
                     $existing_product->delete(true);
                     $results['deleted_products']++;
                     error_log("Deleted product with SKU: $sku (not in JSON) (cron sync)");
                 }
             }
             error_log("SyncWoo: Deleted {$results['deleted_products']} products not in JSON (cron sync)");
+        } else {
+            error_log("SyncWoo Error: wc_get_products function not available. Ensure WooCommerce is active.");
+            $errors[] = 'WooCommerce is not active or misconfigured.';
         }
 
         if (empty($products_to_process)) {
-            // Reset processed count and update last sync timestamp
+            update_option('syncwoo_product_snapshot', $current_snapshot);
             update_option('syncwoo_processed_count', 0);
             update_option('syncwoo_last_product_update', current_time('mysql'));
             error_log("SyncWoo: Cron sync completed (no more products to process)");
-            return [
-                'success' => true,
-                'message' => 'Cron sync completed',
-                'results' => $results,
-                'total_products' => $total_products,
-                'errors' => $results['errors']
-            ];
+            return ['success' => true, 'message' => 'Cron sync completed', 'results' => $results, 'total_products' => $total_products, 'errors' => $results['errors']];
         }
 
-        // Pre-create categories with parent-child relationship
         $root_categories = [];
         $child_categories = [];
         foreach ($products_to_process as $product_data) {
-            if (!empty($product_data['root_category'])) {
-                $root_categories[$product_data['root_category']] = true;
-            }
+            if (!empty($product_data['root_category'])) $root_categories[$product_data['root_category']] = true;
             if (!empty($product_data['category']) && !empty($product_data['root_category'])) {
                 $child_categories[$product_data['root_category']][$product_data['category']] = true;
             }
@@ -1105,17 +1105,8 @@ add_action('syncwoo_product_update_sync', function () {
         foreach (array_keys($root_categories) as $root_category_name) {
             $latin_slug = sanitize_title_with_dashes(transliterate_georgian_to_latin($root_category_name));
             $root_term = term_exists($root_category_name, 'product_cat');
-            if (!$root_term) {
-                $root_term = wp_insert_term($root_category_name, 'product_cat', [
-                    'slug' => $latin_slug
-                ]);
-                if (is_wp_error($root_term)) {
-                    error_log("Failed to create root category $root_category_name: " . $root_term->get_error_message());
-                    $results['errors'][] = "Failed to create root category $root_category_name: " . $root_term->get_error_message();
-                    continue;
-                }
-            }
-            $root_category_ids[$root_category_name] = $root_term['term_id'];
+            if (!$root_term) $root_term = wp_insert_term($root_category_name, 'product_cat', ['slug' => $latin_slug]);
+            if (!is_wp_error($root_term)) $root_category_ids[$root_category_name] = $root_term['term_id'];
             error_log("SyncWoo: Root category '$root_category_name' processed (ID: {$root_term['term_id']}) (cron sync)");
         }
 
@@ -1125,41 +1116,22 @@ add_action('syncwoo_product_update_sync', function () {
             foreach (array_keys($children) as $child_category_name) {
                 $latin_slug = sanitize_title_with_dashes(transliterate_georgian_to_latin($child_category_name));
                 $child_term = term_exists($child_category_name, 'product_cat');
-                if (!$child_term) {
-                    $child_term = wp_insert_term($child_category_name, 'product_cat', [
-                        'slug' => $latin_slug,
-                        'parent' => $parent_id
-                    ]);
-                    if (is_wp_error($child_term)) {
-                        error_log("Failed to create child category $child_category_name: " . $child_term->get_error_message());
-                        $results['errors'][] = "Failed to create child category $child_category_name: " . $child_term->get_error_message();
-                        continue;
-                    }
-                }
-                $child_category_ids[$child_category_name] = $child_term['term_id'];
+                if (!$child_term) $child_term = wp_insert_term($child_category_name, 'product_cat', ['slug' => $latin_slug, 'parent' => $parent_id]);
+                if (!is_wp_error($child_term)) $child_category_ids[$child_category_name] = $child_term['term_id'];
                 error_log("SyncWoo: Child category '$child_category_name' processed (ID: {$child_term['term_id']}) (cron sync)");
             }
         }
 
-        // Pre-create brands
         $brands = [];
         foreach ($products_to_process as $product_data) {
-            if (!empty($product_data['features'])) {
-                foreach ($product_data['features'] as $f) {
-                    if (isset($f['feature_id']) && $f['feature_id'] == 5485 && !empty(trim($f['variant']))) {
-                        $brands[trim($f['variant'])] = true;
-                    }
-                }
+            if (!empty($product_data['features'])) foreach ($product_data['features'] as $f) {
+                if (isset($f['feature_id']) && $f['feature_id'] == 5485 && !empty(trim($f['variant']))) $brands[trim($f['variant'])] = true;
             }
         }
 
         $brand_taxonomy = 'product_brand';
         if (!taxonomy_exists($brand_taxonomy)) {
-            register_taxonomy($brand_taxonomy, 'product', [
-                'labels' => ['name' => 'Brands'],
-                'hierarchical' => false,
-                'public' => true
-            ]);
+            register_taxonomy($brand_taxonomy, 'product', ['labels' => ['name' => 'Brands'], 'hierarchical' => false, 'public' => true]);
             error_log("Created brand taxonomy '$brand_taxonomy' (cron sync)");
         }
 
@@ -1167,255 +1139,125 @@ add_action('syncwoo_product_update_sync', function () {
             $term = term_exists($brand, $brand_taxonomy);
             if (!$term) {
                 $term_result = wp_insert_term($brand, $brand_taxonomy);
-                if (is_wp_error($term_result)) {
-                    error_log("Failed to create brand term '$brand': " . $term_result->get_error_message());
-                    $results['errors'][] = "Failed to create brand term '$brand': " . $term_result->get_error_message();
-                } else {
-                    error_log("Created brand term '$brand', ID: " . $term_result['term_id'] . " (cron sync)");
-                }
-            } else {
-                error_log("Brand term '$brand' already exists (cron sync)");
-            }
+                if (!is_wp_error($term_result)) error_log("Created brand term '$brand', ID: " . $term_result['term_id'] . " (cron sync)");
+            } else error_log("Brand term '$brand' already exists (cron sync)");
         }
 
-        // Step 2: Process each product in JSON (Add or Update)
         foreach ($products_to_process as $product_data) {
             try {
                 $sku = trim(sanitize_text_field($product_data['barcode'] ?? ''));
                 if (empty($sku)) {
-                    $error_message = "Skipping product due to empty barcode";
-                    error_log($error_message);
-                    $results['errors'][] = $error_message;
+                    $errors[] = "Skipping product due to empty barcode";
+                    error_log("SyncWoo: Skipping product due to empty barcode");
                     continue;
                 }
 
-                // Check if product exists by SKU
                 $product_id = wc_get_product_id_by_sku($sku);
                 $is_update = $product_id > 0;
-                $last_update = isset($product_data['last_update']) ? $product_data['last_update'] : '';
+                $last_update = $product_data['last_update'] ?? '';
+                $current_data = $current_snapshot[$sku] ?? [];
 
                 if ($is_update) {
                     $product = wc_get_product($product_id);
                     if (!$product) {
                         $is_update = false;
                         $product = new WC_Product_Simple();
-                        error_log("Product with SKU $sku (ID: $product_id) could not be loaded, creating new product (cron sync)");
+                        error_log("SyncWoo: Product with SKU $sku (ID: $product_id) could not be loaded, creating new product (cron sync)");
                     }
+                    $stored_last_update = get_post_meta($product_id, '_syncwoo_last_update', true) ?? '';
+                    $stored_name = $product->get_name() ?? '';
+                    $stored_price = $product->get_sale_price() ?: $product->get_regular_price() ?: '0';
+                    $stored_list_price = $product->get_regular_price() ?: '0';
+                    $stored_amount = $product->get_stock_quantity() ?? 0;
+                    $stored_weight = $product->get_weight() ?? 0;
+                    $stored_description = $product->get_description() ?? '';
+                } else $product = new WC_Product_Simple();
 
-                    // Check if last_update has changed
-                    $stored_last_update = get_post_meta($product_id, '_syncwoo_last_update', true);
-                    if ($stored_last_update === $last_update) {
-                        error_log("No update needed for SKU: $sku (last_update unchanged) (cron sync)");
-                        continue; // Skip if no changes
-                    }
-                } else {
-                    $product = new WC_Product_Simple();
-                }
+                $needs_update = !$is_update || (
+                    $stored_last_update !== $last_update ||
+                    $stored_name !== ($product_data['product'] ?? '') ||
+                    $stored_price !== strval(floatval($product_data['price'] ?? 0)) ||
+                    $stored_list_price !== strval(floatval($product_data['list_price'] ?? 0)) ||
+                    $stored_amount !== absint($product_data['amount'] ?? 0) ||
+                    $stored_weight !== floatval($product_data['weight'] ?? 0) ||
+                    $stored_description !== ($product_data['description'] ?? '')
+                );
+                error_log("SyncWoo: Checking SKU $sku, needs_update: $needs_update (last_update: $stored_last_update vs $last_update, name: $stored_name vs " . ($product_data['product'] ?? '') . ", price: $stored_price vs " . strval(floatval($product_data['price'] ?? 0)) . ")");
 
-                $needs_update = false;
-
-                // Check if product needs updating
-                if ($is_update) {
-                    $needs_update = (
-                        $product->get_name() !== sanitize_text_field($product_data['product']) ||
-                        $product->get_description() !== wp_kses_post($product_data['description']) ||
-                        $product->get_regular_price() != floatval($product_data['list_price']) ||
-                        $product->get_sale_price() != floatval($product_data['price']) ||
-                        $product->get_stock_quantity() != absint($product_data['amount'] ?? 0) ||
-                        $product->get_weight() != floatval($product_data['weight'] ?? 0)
-                    );
-                }
-
-                $product->set_name(sanitize_text_field($product_data['product']));
-                $product->set_description(wp_kses_post($product_data['description']));
-                $product->set_regular_price(floatval($product_data['list_price']));
-                $product->set_sale_price(floatval($product_data['price']));
+                $product->set_name(sanitize_text_field($product_data['product'] ?? ''));
+                $product->set_description(wp_kses_post($product_data['description'] ?? ''));
+                $product->set_regular_price(floatval($product_data['list_price'] ?? 0));
+                $product->set_sale_price(floatval($product_data['price'] ?? 0));
                 $product->set_sku($sku);
                 $product->set_manage_stock(true);
                 $product->set_stock_quantity(absint($product_data['amount'] ?? 0));
-
-                if (!empty($product_data['weight'])) {
-                    $product->set_weight(floatval($product_data['weight']));
-                }
+                if (!empty($product_data['weight'])) $product->set_weight(floatval($product_data['weight']));
 
                 $category_ids = [];
-                if (!empty($product_data['root_category'])) {
-                    $root_category_name = $product_data['root_category'];
-                    if (isset($root_category_ids[$root_category_name])) {
-                        $category_ids[] = $root_category_ids[$root_category_name];
-                    }
+                if (!empty($product_data['root_category']) && isset($root_category_ids[$product_data['root_category']])) {
+                    $category_ids[] = $root_category_ids[$product_data['root_category']];
                 }
-                if (!empty($product_data['category'])) {
-                    $child_category_name = $product_data['category'];
-                    if (isset($child_category_ids[$child_category_name])) {
-                        $category_ids[] = $child_category_ids[$child_category_name];
-                    }
+                if (!empty($product_data['category']) && isset($child_category_ids[$product_data['category']])) {
+                    $category_ids[] = $child_category_ids[$product_data['category']];
                 }
-                if (!empty($category_ids)) {
-                    $product->set_category_ids($category_ids);
-                }
+                if (!empty($category_ids)) $product->set_category_ids($category_ids);
 
-                // Handle product attributes
                 $attributes = $product->get_attributes();
-
-                // Store brand value for assignment after save
                 $product_brand = null;
 
-                // Process features attributes
-                if (!empty($product_data['features'])) {
-                    foreach ($product_data['features'] as $feature) {
-                        $name = trim($feature['feature']);
-                        $value = trim($feature['variant']);
-                        $feature_id = isset($feature['feature_id']) ? $feature['feature_id'] : 0;
-
-                        if (empty($name) || empty($value) || $value === ' ') {
-                            continue;
-                        }
-
-                        if ($feature_id == 5485) {
-                            $product_brand = $value; // Store for later assignment
-                            continue;
-                        }
-
-                        // $taxonomy_slug = 'pa_go_' . $feature_id;
-                        $taxonomy = wc_attribute_taxonomy_name('go_' . $feature_id);
-
-                        // Add this code here to create and assign attributes
-                        if (!isset($attributes[$taxonomy])) {
-                            $attr = new WC_Product_Attribute();
-                            $attr->set_id(wc_attribute_taxonomy_id_by_name('go_' . $feature_id));
-                            $attr->set_name($taxonomy);
-                            $attr->set_options([$value]);
-                            $attr->set_position(0);
-                            $attr->set_visible(true);
-                            $attr->set_variation(false);
-                            $attributes[$taxonomy] = $attr;
-                        }
-
-                        // Create attribute if it doesn't exist
-                        if (!taxonomy_exists($taxonomy)) {
-                            $attribute_id = wc_create_attribute([
-                                'name' => $name,
-                                'slug' => 'go_' . $feature_id,
-                                'type' => 'select'
-                            ]);
-
-                            if (is_wp_error($attribute_id)) {
-                                $error_message = "Failed to create attribute '$name': " . $attribute_id->get_error_message();
-                                error_log($error_message);
-                                $results['errors'][] = $error_message;
-                                continue;
-                            }
-
-                            register_taxonomy($taxonomy, 'product', [
-                                'labels' => ['name' => $name],
-                                'hierarchical' => false,
-                                'public' => true
-                            ]);
+                if (!empty($product_data['features'])) foreach ($product_data['features'] as $feature) {
+                    $name = trim($feature['feature']);
+                    $value = trim($feature['variant']);
+                    $feature_id = $feature['feature_id'] ?? 0;
+                    if (empty($name) || empty($value) || $value === ' ') continue;
+                    if ($feature_id == 5485) {
+                        $product_brand = $value;
+                        continue;
+                    }
+                    $taxonomy = wc_attribute_taxonomy_name('go_' . $feature_id);
+                    if (!taxonomy_exists($taxonomy)) {
+                        $attribute_id = wc_create_attribute(['name' => $name, 'slug' => 'go_' . $feature_id, 'type' => 'select']);
+                        if (!is_wp_error($attribute_id)) {
+                            register_taxonomy($taxonomy, 'product', ['labels' => ['name' => $name], 'hierarchical' => false, 'public' => true]);
                             error_log("Created taxonomy '$taxonomy' for attribute '$name' (cron sync)");
                         }
-
-                        // Ensure term exists or create it
-                        $term = term_exists($value, $taxonomy);
-                        if (!$term) {
-                            $term_result = wp_insert_term($value, $taxonomy);
-                            if (is_wp_error($term_result)) {
-                                $error_message = "Failed to insert term '$value' for taxonomy '$taxonomy': " . $term_result->get_error_message();
-                                error_log($error_message);
-                                $results['errors'][] = $error_message;
-                                continue;
-                            } else {
-                                $term_id = $term_result['term_id'];
-                                error_log("New term '$value' created for taxonomy '$taxonomy', ID: $term_id (cron sync)");
-                            }
-                        } else {
-                            $term_id = is_array($term) ? $term['term_id'] : $term;
-                            error_log("Term '$value' already exists for taxonomy '$taxonomy', ID: $term_id (cron sync)");
-                        }
-
-                        // Assign term to product
-                        if (isset($term_id) && $term_id) {
-                            $result = wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
-                            if (is_wp_error($result)) {
-                                $error_message = "Failed to set term '$value' for product ID {$product->get_id()}: " . $result->get_error_message();
-                                error_log($error_message);
-                                $results['errors'][] = $error_message;
-                            } else {
-                                error_log("Term '$value' assigned to product ID {$product->get_id()} (cron sync)");
-                            }
-                        }
-
-                        // Add to product attributes
-                        if (!isset($attributes[$taxonomy])) {
-                            $attr = new WC_Product_Attribute();
-                            $attr->set_id(wc_attribute_taxonomy_id_by_name('go_' . $feature_id));
-                            $attr->set_name($taxonomy);
-                            $attr->set_options([$value]);
-                            $attr->set_position(0);
-                            $attr->set_visible(true);
-                            $attr->set_variation(false);
-                            $attributes[$taxonomy] = $attr;
-                            error_log("Attribute '$name' set for product ID {$product->get_id()} with value '$value' (cron sync)");
-                        }
+                    }
+                    $term = term_exists($value, $taxonomy);
+                    $term_id = $term ? (is_array($term) ? $term['term_id'] : $term) : null;
+                    if (!$term_id) {
+                        $term_result = wp_insert_term($value, $taxonomy);
+                        if (!is_wp_error($term_result)) $term_id = $term_result['term_id'];
+                    }
+                    if ($term_id) wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
+                    if (!isset($attributes[$taxonomy])) {
+                        $attr = new WC_Product_Attribute();
+                        $attr->set_id(wc_attribute_taxonomy_id_by_name('go_' . $feature_id));
+                        $attr->set_name($taxonomy);
+                        $attr->set_options([$value]);
+                        $attr->set_position(0);
+                        $attr->set_visible(true);
+                        $attr->set_variation(false);
+                        $attributes[$taxonomy] = $attr;
                     }
                 }
 
-                // Handle "ერთეული" attribute
                 if (!empty($product_data['Unit'])) {
                     $unit_value = sanitize_text_field($product_data['Unit']);
                     $taxonomy = 'pa_unit';
-
-                    // Create attribute if it doesn't exist
                     if (!taxonomy_exists($taxonomy)) {
-                        $attribute = wc_create_attribute([
-                            'name' => 'ერთეული',
-                            'slug' => 'unit',
-                            'type' => 'select'
-                        ]);
-                        if (is_wp_error($attribute)) {
-                            $error_message = "Failed to create attribute 'ერთეული': " . $attribute->get_error_message();
-                            error_log($error_message);
-                            $results['errors'][] = $error_message;
-                        } else {
-                            register_taxonomy($taxonomy, 'product', [
-                                'labels' => ['name' => 'ერთეული'],
-                                'hierarchical' => false,
-                                'public' => true
-                            ]);
+                        $attribute = wc_create_attribute(['name' => 'ერთეული', 'slug' => 'unit', 'type' => 'select']);
+                        if (!is_wp_error($attribute)) {
+                            register_taxonomy($taxonomy, 'product', ['labels' => ['name' => 'ერთეული'], 'hierarchical' => false, 'public' => true]);
                             error_log("Created taxonomy '$taxonomy' for 'ერთეული' (cron sync)");
                         }
                     }
-
-                    // Ensure term exists or create it
                     $term = term_exists($unit_value, $taxonomy);
-                    if (!$term) {
+                    $term_id = $term ? (is_array($term) ? $term['term_id'] : $term) : null;
+                    if (!$term_id) {
                         $term_result = wp_insert_term($unit_value, $taxonomy);
-                        if (is_wp_error($term_result)) {
-                            $error_message = "Failed to insert term '$unit_value' for taxonomy '$taxonomy': " . $term_result->get_error_message();
-                            error_log($error_message);
-                            $results['errors'][] = $error_message;
-                        } else {
-                            $term_id = $term_result['term_id'];
-                            error_log("New term '$unit_value' created for taxonomy '$taxonomy', ID: $term_id (cron sync)");
-                        }
-                    } else {
-                        $term_id = is_array($term) ? $term['term_id'] : $term;
-                        error_log("Term '$unit_value' already exists for taxonomy '$taxonomy', ID: $term_id (cron sync)");
+                        if (!is_wp_error($term_result)) $term_id = $term_result['term_id'];
                     }
-
-                    // Assign term to product
-                    if (isset($term_id) && $term_id) {
-                        $result = wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
-                        if (is_wp_error($result)) {
-                            $error_message = "Failed to set term '$unit_value' for product ID {$product->get_id()}: " . $result->get_error_message();
-                            error_log($error_message);
-                            $results['errors'][] = $error_message;
-                        } else {
-                            error_log("Term '$unit_value' assigned to product ID {$product->get_id()} (cron sync)");
-                        }
-                    }
-
-                    // Add to product attributes
+                    if ($term_id) wp_set_object_terms($product->get_id(), (int)$term_id, $taxonomy, false);
                     if (!isset($attributes[$taxonomy])) {
                         $attr = new WC_Product_Attribute();
                         $attr->set_id(wc_attribute_taxonomy_id_by_name('unit'));
@@ -1425,155 +1267,113 @@ add_action('syncwoo_product_update_sync', function () {
                         $attr->set_visible(true);
                         $attr->set_variation(false);
                         $attributes[$taxonomy] = $attr;
-                        error_log("Attribute 'ერთეული' set for product ID {$product->get_id()} with value '$unit_value' (cron sync)");
                     }
                 }
 
-                // Save all attributes to product
                 $product->set_attributes($attributes);
 
                 // Handle main image
                 $current_image_id = $product->get_image_id();
-                if (!empty($product_data['images'][0])) {
-                    $new_image_url = rtrim($product_data['images'][0], '/');
+                $new_image_urls = $product_data['images'] ?? [];
+                if (!empty($new_image_urls[0])) {
+                    $new_image_url = rtrim($new_image_urls[0], '/');
                     $new_image_id = syncwoo_upload_product_image($new_image_url);
-
                     if ($new_image_id && !is_wp_error($new_image_id)) {
                         $current_url_hash = $current_image_id ? get_post_meta($current_image_id, '_syncwoo_image_url_hash', true) : '';
                         $new_url_hash = md5($new_image_url);
-
                         if ($current_image_id && $current_url_hash === $new_url_hash) {
-                            error_log("Main image unchanged for SKU: $sku, URL: $new_image_url (hash: $new_url_hash) (cron sync)");
+                            error_log("SyncWoo: Main image unchanged for SKU: $sku, URL: $new_image_url (hash: $new_url_hash) (cron sync)");
                         } else {
                             $product->set_image_id($new_image_id);
-                            $needs_update = true;
-                            error_log("Main image set/updated for SKU: $sku, URL: $new_image_url (hash: $new_url_hash) (cron sync)");
+                            error_log("SyncWoo: Main image set/updated for SKU: $sku, URL: $new_image_url (hash: $new_url_hash) (cron sync)");
                         }
-                    } else {
-                        $error_message = "Failed to upload main image for SKU: $sku, URL: $new_image_url";
-                        error_log($error_message);
-                        $results['errors'][] = $error_message;
                     }
+                } elseif ($current_image_id) {
+                    wp_delete_attachment($current_image_id, true);
+                    $product->set_image_id(0);
+                    error_log("SyncWoo: Main image deleted for SKU: $sku (cron sync)");
                 }
 
-                // Handle gallery images with strict duplicate prevention
-                if (!empty($product_data['images']) && count($product_data['images']) > 1) {
-                    $current_gallery_ids = $product->get_gallery_image_ids();
-                    $current_gallery_hashes = array_map(function ($id) {
-                        return get_post_meta($id, '_syncwoo_image_url_hash', true);
-                    }, $current_gallery_ids);
-                    $new_gallery_ids = [];
-                    $new_gallery_hashes = [];
-
-                    for ($i = 1; $i < count($product_data['images']); $i++) {
-                        $gallery_image_url = rtrim($product_data['images'][$i], '/');
+                // Handle gallery images
+                $current_gallery_ids = $product->get_gallery_image_ids();
+                $current_gallery_hashes = array_map(function ($id) {
+                    return get_post_meta($id, '_syncwoo_image_url_hash', true);
+                }, $current_gallery_ids);
+                $new_gallery_ids = [];
+                $json_image_hashes = array_map('md5', array_filter($new_image_urls));
+                if (!empty($new_image_urls) && count($new_image_urls) > 1) {
+                    for ($i = 1; $i < count($new_image_urls); $i++) {
+                        $gallery_image_url = rtrim($new_image_urls[$i], '/');
                         $gallery_image_hash = md5($gallery_image_url);
-
-                        if (!in_array($gallery_image_hash, $current_gallery_hashes) && !in_array($gallery_image_hash, $new_gallery_hashes)) {
+                        if (!in_array($gallery_image_hash, $current_gallery_hashes)) {
                             $gallery_image_id = syncwoo_upload_product_image($gallery_image_url);
                             if ($gallery_image_id && !is_wp_error($gallery_image_id)) {
                                 $new_gallery_ids[] = $gallery_image_id;
-                                $new_gallery_hashes[] = $gallery_image_hash;
-                                error_log("New gallery image added for SKU: $sku, URL: $gallery_image_url (hash: $gallery_image_hash) (cron sync)");
-                            } else {
-                                $error_message = "Failed to upload gallery image for SKU: $sku, URL: $gallery_image_url";
-                                error_log($error_message);
-                                $results['errors'][] = $error_message;
+                                error_log("SyncWoo: New gallery image added for SKU: $sku, URL: $gallery_image_url (hash: $gallery_image_hash) (cron sync)");
                             }
-                        } else {
-                            error_log("Gallery image skipped (duplicate) for SKU: $sku, URL: $gallery_image_url (hash: $gallery_image_hash) (cron sync)");
                         }
                     }
-
-                    if (!empty($new_gallery_ids)) {
-                        $updated_gallery_ids = array_merge($current_gallery_ids, $new_gallery_ids);
-                        $product->set_gallery_image_ids($updated_gallery_ids);
-                        $needs_update = true;
-                        error_log("Gallery updated for SKU: $sku, new IDs: " . implode(', ', $new_gallery_ids) . " (cron sync)");
+                }
+                // Delete gallery images not in JSON
+                foreach ($current_gallery_ids as $gallery_id) {
+                    $gallery_hash = get_post_meta($gallery_id, '_syncwoo_image_url_hash', true);
+                    if (!in_array($gallery_hash, $json_image_hashes)) {
+                        wp_delete_attachment($gallery_id, true);
+                        error_log("SyncWoo: Gallery image deleted for SKU: $sku, ID: $gallery_id (hash: $gallery_hash) (cron sync)");
                     }
                 }
-
-                // Save the product first to ensure it has a valid ID
-                $new_product_id = $product->save();
-                if (!$new_product_id) {
-                    throw new Exception("Failed to save product with SKU: $sku");
+                if (!empty($new_gallery_ids)) {
+                    $updated_gallery_ids = array_merge(array_diff($current_gallery_ids, array_filter($current_gallery_ids, function ($id) use ($json_image_hashes) {
+                        return in_array(get_post_meta($id, '_syncwoo_image_url_hash', true), $json_image_hashes);
+                    })), $new_gallery_ids);
+                    $product->set_gallery_image_ids($updated_gallery_ids);
+                    error_log("SyncWoo: Gallery updated for SKU: $sku, new IDs: " . implode(', ', $new_gallery_ids) . " (cron sync)");
+                } elseif (empty($new_image_urls)) {
+                    $product->set_gallery_image_ids([]);
+                    error_log("SyncWoo: Gallery cleared for SKU: $sku (cron sync)");
                 }
 
-                // Now assign the brand taxonomy after saving the product
+                $new_product_id = $product->save();
+                if (!$new_product_id) throw new Exception("Failed to save product with SKU: $sku");
+
                 if ($product_brand) {
                     $term = term_exists($product_brand, $brand_taxonomy);
-                    $term_id = null;
-
-                    if (!$term) {
+                    $term_id = $term ? (is_array($term) ? $term['term_id'] : $term) : null;
+                    if (!$term_id) {
                         $term_result = wp_insert_term($product_brand, $brand_taxonomy);
-                        if (is_wp_error($term_result)) {
-                            $error_message = "Failed to create brand term '$product_brand': " . $term_result->get_error_message();
-                            error_log($error_message);
-                            $results['errors'][] = $error_message;
-                        } else {
-                            $term_id = $term_result['term_id'];
-                            error_log("Created brand term '$product_brand', ID: $term_id (cron sync)");
-                        }
-                    } else {
-                        $term_id = is_array($term) ? $term['term_id'] : $term;
-                        error_log("Brand term '$product_brand' already exists, ID: $term_id (cron sync)");
+                        if (!is_wp_error($term_result)) $term_id = $term_result['term_id'];
                     }
-
-                    if ($term_id) {
-                        $result = wp_set_object_terms($new_product_id, (int)$term_id, $brand_taxonomy, false);
-                        if (is_wp_error($result)) {
-                            $error_message = "Failed to assign brand '$product_brand' to product ID $new_product_id: " . $result->get_error_message();
-                            error_log($error_message);
-                            $results['errors'][] = $error_message;
-                        } else {
-                            error_log("Assigned brand '$product_brand' to product ID $new_product_id, term ID: $term_id (cron sync)");
-                        }
-                    }
+                    if ($term_id) wp_set_object_terms($new_product_id, (int)$term_id, $brand_taxonomy, false);
                 }
 
-                // Store the last_update timestamp
                 update_post_meta($new_product_id, '_syncwoo_last_update', $last_update);
 
                 if ($is_update && $needs_update) {
                     $results['updated_products']++;
-                    error_log("Updated product with SKU: $sku due to changes (cron sync)");
+                    error_log("SyncWoo: Updated product with SKU: $sku due to changes (cron sync)");
                 } elseif (!$is_update) {
                     $results['new_products']++;
-                    error_log("Added new product with SKU: $sku (cron sync)");
+                    error_log("SyncWoo: Added new product with SKU: $sku (cron sync)");
                 } else {
-                    error_log("No changes detected for product with SKU: $sku (cron sync)");
+                    error_log("SyncWoo: No changes detected for product with SKU: $sku (cron sync)");
                 }
-
-                unset($product_data, $product, $attributes);
-
             } catch (Exception $e) {
-                $error_message = "Product sync error for SKU $sku: " . $e->getMessage();
-                error_log($error_message);
-                $results['errors'][] = $error_message;
-                continue; // Continue processing other products
+                $error_msg = "Product sync error for SKU $sku: " . $e->getMessage();
+                error_log("SyncWoo Error: $error_msg");
+                $results['errors'][] = $error_msg;
+                continue;
             }
         }
 
-        // Update processed count
+        update_option('syncwoo_product_snapshot', $current_snapshot);
         $new_processed_count = $processed_count + count($products_to_process);
         update_option('syncwoo_processed_count', $new_processed_count);
         error_log("SyncWoo: Cron batch processed (processed_count: $new_processed_count, remaining: " . max(0, $total_products - $new_processed_count) . ")");
 
-        return [
-            'success' => true,
-            'message' => 'Processed successfully',
-            'results' => $results,
-            'total_products' => $total_products,
-            'errors' => $results['errors']
-        ];
-
+        return ['success' => true, 'message' => 'Processed successfully', 'results' => $results, 'total_products' => $total_products, 'errors' => $results['errors']];
     } catch (Exception $e) {
-        $error_message = 'SyncWoo Error: ' . $e->getMessage();
-        error_log($error_message);
-        return [
-            'success' => false,
-            'message' => __('Product update failed: ', 'syncwoo') . $e->getMessage(),
-            'errors' => array_merge($errors, [$error_message])
-        ];
+        $error_msg = 'SyncWoo Error: ' . $e->getMessage();
+        error_log("SyncWoo Error: $error_msg");
+        return ['success' => false, 'message' => __('Product update failed: ', 'syncwoo') . $e->getMessage(), 'errors' => array_merge($errors, [$error_msg])];
     }
 });

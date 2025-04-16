@@ -31,6 +31,12 @@
  }
 
 
+ .progress-bar-manual{
+  border-radius: 12px;
+  background: linear-gradient(90deg,rgba(112, 8, 231, 1) 0%, rgba(87, 199, 133, 1) 70%);
+ }
+
+
  .wrap {
   margin-left: 0 !important;
   padding: 20px;

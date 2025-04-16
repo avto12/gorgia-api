@@ -35,10 +35,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // Batch sync (for manual sync with progress bar)
 document.addEventListener('DOMContentLoaded', function () {
-    const syncButton = document.getElementById('syncwoo-button');
-    const cancelButton = document.getElementById('syncwoo-cancel');
-    const resultDiv = document.getElementById('syncwoo-result');
-    const progressBar = document.querySelector('.progress-bar');
+    const syncButton = document.getElementById('syncwoo-manual-button');
+    const cancelButton = document.getElementById('syncwoo-manual-cancel');
+    const resultDiv = document.getElementById('syncwoo-manual-result');
+    const progressBar = document.querySelector('.progress-bar-manual');
     let syncInProgress = false;
     let controller = null;
     let processedCount = 0;
@@ -108,8 +108,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 deletedCount += data.data.results.deleted_products || 0;
                 totalProducts = data.data.total_products;
 
-                const progressPercentage = totalProducts ? Math.min((processedCount / totalProducts) * 100, 100) : 0;
-                progressBar.style.width = `${progressPercentage}%`;
+                const progressPercentage = totalProducts && totalProducts > 0 
+                ? Math.min((processedCount / totalProducts) * 100, 100) 
+                : 0;
+            progressBar.style.width = `${progressPercentage.toFixed(2)}%`;
 
                 resultDiv.innerHTML = `
                     <div class="notice notice-success">
@@ -275,8 +277,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 manualDeletedCount += data.data.results.deleted_products || 0;
                 totalProducts = data.data.total_products;
 
-                const progressPercentage = totalProducts ? Math.min((manualProcessedCount / totalProducts) * 100, 100) : 0;
-                manualProgressBar.style.width = `${progressPercentage}%`;
+                const progressPercentage = totalProducts && totalProducts > 0 
+                ? Math.min((manualProcessedCount / totalProducts) * 100, 100) 
+                : 0;
+            manualProgressBar.style.width = `${progressPercentage.toFixed(2)}%`;
 
                 manualResultDiv.innerHTML = `
                     <div class="notice notice-success">

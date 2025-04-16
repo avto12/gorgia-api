@@ -120,8 +120,26 @@ function syncwoo_perform_sync() {
         error_log("SyncWoo: Total products after merging: " . count($data));
         unset($json_data_1, $decoded_data_1);
 
+        // Remove duplicates based on barcode
+        $unique_data = [];
+        $barcodes = [];
+        foreach ($data as $item) {
+            $barcode = sanitize_text_field($item['barcode'] ?? '');
+            if (empty($barcode)) {
+                continue; // Skip items without a barcode
+            }
+            if (!in_array($barcode, $barcodes)) {
+                $barcodes[] = $barcode;
+                $unique_data[] = $item;
+            } else {
+                error_log("Duplicate barcode found and skipped: $barcode");
+            }
+        }
+        $data = $unique_data;
+
+        // Check if data is empty after filtering
         if (empty($data)) {
-            $error_message = 'No valid data in JSON files';
+            $error_message = 'No valid data in JSON files after removing duplicates';
             error_log("SyncWoo Error: $error_message");
             throw new Exception($error_message);
         }
@@ -263,10 +281,12 @@ function syncwoo_perform_sync() {
                     throw new Exception('Missing barcode for product: ' . ($product_data['product'] ?? 'Unknown'));
                 }
 
+                // Add your product creation or update logic here
                 $sku = sanitize_text_field($product_data['barcode']);
                 $product_id = wc_get_product_id_by_sku($sku);
                 $is_update = $product_id > 0;
                 $product = $is_update ? new WC_Product($product_id) : new WC_Product_Simple();
+
 
                 $needs_update = false;
 
@@ -496,6 +516,11 @@ function syncwoo_perform_sync() {
                 // Handle gallery images with strict duplicate prevention
                 if (!empty($product_data['images']) && count($product_data['images']) > 1) {
                     $current_gallery_ids = $product->get_gallery_image_ids();
+
+                    if (!in_array($new_image_id, $current_gallery_ids)) {
+                        $product->set_gallery_image_ids(array_merge($current_gallery_ids, [$new_image_id]));
+                    }
+
                     $current_gallery_hashes = array_map(function ($id) {
                         return get_post_meta($id, '_syncwoo_image_url_hash', true);
                     }, $current_gallery_ids);
@@ -817,200 +842,6 @@ function render_product_sync_page_with_frequency() {
             </form>
         </div>
     </div>
-
- 
-
-    <!-- <script>
-        // Manual sync JavaScript
-        document.addEventListener('DOMContentLoaded', function () {
-            const manualSyncButton = document.getElementById('syncwoo-manual-button');
-            const manualCancelButton = document.getElementById('syncwoo-manual-cancel');
-            const manualResultDiv = document.getElementById('syncwoo-manual-result');
-            const manualProgressBar = document.querySelector('.progress-bar-manual');
-            let manualSyncInProgress = false;
-            let manualController = null;
-            let manualProcessedCount = 0;
-            let manualNewCount = 0;
-            let manualUpdatedCount = 0;
-            let manualDeletedCount = 0;
-
-            if (!manualSyncButton || !manualCancelButton || !manualResultDiv || !manualProgressBar) {
-                console.error('One or more required elements are missing for manual sync');
-                return;
-            }
-
-            manualSyncButton.addEventListener('click', async function () {
-                if (manualSyncInProgress) {
-                    alert("Manual sync is already in progress. Please wait.");
-                    return;
-                }
-
-                manualSyncInProgress = true;
-                manualController = new AbortController();
-                const button = this;
-                button.disabled = true;
-                manualCancelButton.disabled = false;
-                button.innerHTML = '<span class="spinner is-active"></span> Syncing...';
-
-                manualResultDiv.innerHTML = '<div class="notice notice-info"><p>Starting manual sync...</p></div>';
-                manualProgressBar.style.width = '0%';
-                manualProcessedCount = 0;
-                manualNewCount = 0;
-                manualUpdatedCount = 0;
-                manualDeletedCount = 0;
-
-                // Clear any scheduled cron jobs during manual sync
-                const responseClearCron = await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Accept': 'application/json'
-                    },
-                    body: new URLSearchParams({
-                        action: 'syncwoo_clear_cron',
-                        nonce: syncwoo_vars.syncwoo_nonce
-                    })
-                });
-
-                if (!responseClearCron.ok) {
-                    console.error('Failed to clear cron jobs');
-                }
-
-                try {
-                    const response = await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Accept': 'application/json'
-                        },
-                        signal: manualController.signal,
-                        body: new URLSearchParams({
-                            action: 'syncwoo_perform_sync',
-                            nonce: syncwoo_vars.syncwoo_nonce,
-                            processed_count: manualProcessedCount
-                        })
-                    });
-
-                    if (!response.ok) {
-                        const text = await response.text();
-                        throw new Error(`Server error (${response.status}): ${text}`);
-                    }
-
-                    const data = await response.json();
-                    if (!data.success) {
-                        throw new Error(data.data?.message || 'Unknown error');
-                    }
-
-                    manualProcessedCount = data.data.processed_count;
-                    manualNewCount = data.data.results.new_products;
-                    manualUpdatedCount = data.data.results.updated_products;
-                    manualDeletedCount = data.data.results.deleted_products || 0;
-                    const totalProducts = data.data.total_products;
-
-                    manualProgressBar.style.width = '100%';
-                    manualResultDiv.innerHTML = `
-                        <div class="notice notice-success">
-                            <p>${data.data.message}</p>
-                            <p>Total Products in JSON: ${totalProducts}</p>
-                            <p>New Products: ${manualNewCount}</p>
-                            <p>Updated Products: ${manualUpdatedCount}</p>
-                            <p>Deleted Products: ${manualDeletedCount}</p>
-                        </div>
-                    `;
-
-                    // Mark initial manual sync as done
-                    await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Accept': 'application/json'
-                        },
-                        body: new URLSearchParams({
-                            action: 'syncwoo_mark_initial_manual_sync_done',
-                            nonce: syncwoo_vars.syncwoo_nonce
-                        })
-                    });
-
-                    // Reschedule cron after manual sync
-                    await fetch(syncwoo_vars.syncwoo_ajax_url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Accept': 'application/json'
-                        },
-                        body: new URLSearchParams({
-                            action: 'syncwoo_reschedule_cron',
-                            nonce: syncwoo_vars.syncwoo_nonce
-                        })
-                    });
-
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
-                        manualProgressBar.style.width = '0%';
-                    } else {
-                        console.error('Manual sync error:', error);
-                        manualResultDiv.innerHTML = `
-                            <div class="notice notice-error">
-                                <p>Error: ${error.message}</p>
-                                <p>Check console or server logs</p>
-                            </div>
-                        `;
-                    }
-                } finally {
-                    manualSyncInProgress = false;
-                    button.disabled = false;
-                    manualCancelButton.disabled = true;
-                    button.textContent = 'Start Sync';
-                    manualController = null;
-                }
-            });
-
-            manualCancelButton.addEventListener('click', function () {
-                if (manualController && manualSyncInProgress) {
-                    manualController.abort();
-                    manualSyncInProgress = false;
-                    manualResultDiv.innerHTML = '<div class="notice notice-warning"><p>Manual sync cancelled</p></div>';
-                    manualProgressBar.style.width = '0%';
-                    manualSyncButton.disabled = false;
-                    manualSyncButton.textContent = 'Start Sync';
-                    this.disabled = true;
-                }
-            });
-
-            // Countdown timer for product update frequency
-            const countdownElement = document.getElementById('time-remaining-product-update');
-            const countdownContainer = document.getElementById('countdown-timer-product-update');
-            if (countdownElement && countdownContainer) {
-                let timeRemaining = parseInt(countdownContainer.getAttribute('data-remaining'), 10);
-
-                if (timeRemaining > 0) {
-                    const updateCountdown = () => {
-                        if (timeRemaining <= 0) {
-                            countdownElement.textContent = 'Syncing now...';
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 1000);
-                            return;
-                        }
-
-                        const hours = Math.floor(timeRemaining / 3600);
-                        const minutes = Math.floor((timeRemaining % 3600) / 60);
-                        const seconds = timeRemaining % 60;
-
-                        countdownElement.textContent = `${hours}h ${minutes}m ${seconds}s`;
-                        timeRemaining--;
-
-                        setTimeout(updateCountdown, 1000);
-                    };
-
-                    updateCountdown();
-                } else if (countdownElement.textContent === '') {
-                    countdownElement.textContent = 'Disabled';
-                }
-            }
-        });
-    </script> -->
     <?php
 }
 
@@ -1446,8 +1277,20 @@ add_action('syncwoo_product_update_sync', function () {
                             continue;
                         }
 
-                        $taxonomy_slug = 'pa_go_' . $feature_id;
+                        // $taxonomy_slug = 'pa_go_' . $feature_id;
                         $taxonomy = wc_attribute_taxonomy_name('go_' . $feature_id);
+
+                        // Add this code here to create and assign attributes
+                        if (!isset($attributes[$taxonomy])) {
+                            $attr = new WC_Product_Attribute();
+                            $attr->set_id(wc_attribute_taxonomy_id_by_name('go_' . $feature_id));
+                            $attr->set_name($taxonomy);
+                            $attr->set_options([$value]);
+                            $attr->set_position(0);
+                            $attr->set_visible(true);
+                            $attr->set_variation(false);
+                            $attributes[$taxonomy] = $attr;
+                        }
 
                         // Create attribute if it doesn't exist
                         if (!taxonomy_exists($taxonomy)) {

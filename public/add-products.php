@@ -746,12 +746,13 @@ function render_product_sync_page_with_frequency() {
         <button id="syncwoo-manual-cancel" class="button">Cancel</button>
         <div id="syncwoo-manual-result"></div>
         <div style="width: 100%; background: #e1e1e1; height: 20px; margin-top: 10px;">
-            <div class="progress-bar-manual" style="width: 0%; height: 100%; background: #7008e7;"></div>
+            <div class="progress-bar-manual" style="width: 0%; height: 100%;"></div>
         </div>
 
         <!-- Product Update Frequency Section -->
         <div class="syncwoo-product-update-frequency">
             <h2><?php esc_html_e('Product Update Frequency', 'syncwoo'); ?></h2>
+            <h3 style="color:#ff0000"><?php esc_html_e('Select Manual(Start Sync) after synchronization!', 'syncwoo'); ?></h3>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" id="syncwoo-product-frequency-form">
                 <input type="hidden" name="action" value="syncwoo_save_product_frequency">
                 <?php
@@ -1038,7 +1039,7 @@ add_action('syncwoo_product_update_sync', function () {
 
     try {
         $total_products = count($data);
-        $batch_size = 10;
+        $batch_size = 30;
         $processed_count = get_option('syncwoo_processed_count', 0);
         $results = ['new_products' => 0, 'updated_products' => 0, 'deleted_products' => 0, 'errors' => $errors];
 

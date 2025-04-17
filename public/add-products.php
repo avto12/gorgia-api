@@ -296,7 +296,6 @@ function syncwoo_perform_sync() {
                         $product->get_name() !== sanitize_text_field($product_data['product']) ||
                         $product->get_description() !== wp_kses_post($product_data['description']) ||
                         $product->get_regular_price() != floatval($product_data['list_price']) ||
-                        $product->get_sale_price() != floatval($product_data['price']) ||
                         $product->get_stock_quantity() != absint($product_data['amount'] ?? 0) ||
                         $product->get_weight() != floatval($product_data['weight'] ?? 0)
                     );
@@ -305,7 +304,6 @@ function syncwoo_perform_sync() {
                 $product->set_name(sanitize_text_field($product_data['product']));
                 $product->set_description(wp_kses_post($product_data['description']));
                 $product->set_regular_price(floatval($product_data['list_price']));
-                $product->set_sale_price(floatval($product_data['price']));
                 $product->set_sku($sku);
                 $product->set_manage_stock(true);
                 $product->set_stock_quantity(absint($product_data['amount'] ?? 0));
@@ -1054,7 +1052,6 @@ add_action('syncwoo_product_update_sync', function () {
                 $current_snapshot[$product['barcode']] = [
                     'last_update' => $product['last_update'],
                     'name' => $product['product'] ?? '',
-                    'price' => $product['price'] ?? '',
                     'list_price' => $product['list_price'] ?? '',
                     'amount' => $product['amount'] ?? 0,
                     'weight' => $product['weight'] ?? 0,
@@ -1167,7 +1164,6 @@ add_action('syncwoo_product_update_sync', function () {
                     }
                     $stored_last_update = get_post_meta($product_id, '_syncwoo_last_update', true) ?? '';
                     $stored_name = $product->get_name() ?? '';
-                    $stored_price = $product->get_sale_price() ?: $product->get_regular_price() ?: '0';
                     $stored_list_price = $product->get_regular_price() ?: '0';
                     $stored_amount = $product->get_stock_quantity() ?? 0;
                     $stored_weight = $product->get_weight() ?? 0;
@@ -1177,18 +1173,16 @@ add_action('syncwoo_product_update_sync', function () {
                 $needs_update = !$is_update || (
                     $stored_last_update !== $last_update ||
                     $stored_name !== ($product_data['product'] ?? '') ||
-                    $stored_price !== strval(floatval($product_data['price'] ?? 0)) ||
                     $stored_list_price !== strval(floatval($product_data['list_price'] ?? 0)) ||
                     $stored_amount !== absint($product_data['amount'] ?? 0) ||
                     $stored_weight !== floatval($product_data['weight'] ?? 0) ||
                     $stored_description !== ($product_data['description'] ?? '')
                 );
-                error_log("SyncWoo: Checking SKU $sku, needs_update: $needs_update (last_update: $stored_last_update vs $last_update, name: $stored_name vs " . ($product_data['product'] ?? '') . ", price: $stored_price vs " . strval(floatval($product_data['price'] ?? 0)) . ")");
+                error_log("SyncWoo: Checking SKU $sku, needs_update: $needs_update (last_update: $stored_last_update vs $last_update, name: $stored_name vs " . ($product_data['product'] ?? '') . " " . strval(floatval($product_data['price'] ?? 0)) . ")");
 
                 $product->set_name(sanitize_text_field($product_data['product'] ?? ''));
                 $product->set_description(wp_kses_post($product_data['description'] ?? ''));
                 $product->set_regular_price(floatval($product_data['list_price'] ?? 0));
-                $product->set_sale_price(floatval($product_data['price'] ?? 0));
                 $product->set_sku($sku);
                 $product->set_manage_stock(true);
                 $product->set_stock_quantity(absint($product_data['amount'] ?? 0));

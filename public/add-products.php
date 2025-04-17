@@ -56,7 +56,7 @@ function syncwoo_perform_sync() {
 
     try {
         $processed_count = isset($_POST['processed_count']) ? intval($_POST['processed_count']) : 0;
-        $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 10;
+        $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 20;
 
         $file_path_0 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_0.json';
         $file_path_1 = WP_CONTENT_DIR . '/uploads/syncwoo-json/product_1.json';

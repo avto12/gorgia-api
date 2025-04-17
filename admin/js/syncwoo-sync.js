@@ -94,7 +94,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let newCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
-    const batchSize = 10; // Process 10 products at a time
+    const batchSize = 20; // Process 10 products at a time
     const delayBetweenBatches = 60 * 1000; // Delay between batches in milliseconds (60 seconds)
 
     // Check if all required elements for manual sync exist

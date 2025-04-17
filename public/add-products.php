@@ -154,26 +154,7 @@ function syncwoo_perform_sync() {
         $json_skus = array_map(function ($product) {
             return sanitize_text_field($product['barcode'] ?? '');
         }, $data);
-
-        // Delete products not in JSON (only on first batch)
-        if ($processed_count === 0) {
-            $existing_products = wc_get_products([
-                'limit' => -1,
-                'status' => 'publish',
-                'return' => 'objects'
-            ]);
-
-            foreach ($existing_products as $existing_product) {
-                $sku = $existing_product->get_sku();
-                if (!in_array($sku, $json_skus)) {
-                    $existing_product->delete(true); // Permanent delete
-                    $results['deleted_products']++;
-                    error_log("Deleted product with SKU: $sku (not in JSON)");
-                }
-            }
-            error_log("SyncWoo: Deleted {$results['deleted_products']} products not in JSON");
-        }
-
+ 
         if (empty($products_to_process)) {
             error_log("SyncWoo: No more products to process");
             wp_send_json_success([
@@ -1065,22 +1046,6 @@ add_action('syncwoo_product_update_sync', function () {
         }, $data);
         error_log("SyncWoo: Found " . count($json_skus) . " unique SKUs in JSON");
 
-        if (function_exists('wc_get_products')) {
-            $existing_products = wc_get_products(['limit' => -1, 'status' => 'publish', 'return' => 'objects']);
-            error_log("SyncWoo: Retrieved " . count($existing_products) . " existing products");
-            foreach ($existing_products as $existing_product) {
-                $sku = $existing_product->get_sku();
-                if (!in_array($sku, $json_skus) && $existing_product->get_status() === 'publish') {
-                    $existing_product->delete(true);
-                    $results['deleted_products']++;
-                    error_log("Deleted product with SKU: $sku (not in JSON) (cron sync)");
-                }
-            }
-            error_log("SyncWoo: Deleted {$results['deleted_products']} products not in JSON (cron sync)");
-        } else {
-            error_log("SyncWoo Error: wc_get_products function not available. Ensure WooCommerce is active.");
-            $errors[] = 'WooCommerce is not active or misconfigured.';
-        }
 
         if (empty($products_to_process)) {
             update_option('syncwoo_product_snapshot', $current_snapshot);
